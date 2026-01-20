@@ -43,3 +43,35 @@ DATABASE_URL = (
 
 engine = create_engine(DATABASE_URL, pool_recycle=3600)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# 테이블 자동 생성
+def init_db():
+    """데이터베이스 테이블이 없으면 자동으로 생성"""
+    from sqlalchemy import text
+    
+    create_table_sql = text("""
+        CREATE TABLE IF NOT EXISTS products (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            keyword VARCHAR(255),
+            product_name TEXT,
+            unit_price INT,
+            quantity INT,
+            total_price INT,
+            mall_name VARCHAR(255),
+            calc_method VARCHAR(50),
+            link TEXT,
+            image_url TEXT,
+            card_image_path TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_unit_price (unit_price),
+            INDEX idx_created_at (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """)
+    
+    try:
+        with engine.connect() as conn:
+            conn.execute(create_table_sql)
+            conn.commit()
+        print("✅ Database table 'products' initialized successfully")
+    except Exception as e:
+        print(f"⚠️ Warning: Could not initialize database table: {e}")
