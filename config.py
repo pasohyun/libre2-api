@@ -26,6 +26,15 @@ NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 
 # Railway 배포를 위한 환경 변수 검증
+# API 서버가 아닌 경우(예: worker 서비스)에는 선택적으로 검증
+import sys
+is_api_server = "api.main" in " ".join(sys.argv) or "gunicorn" in " ".join(sys.argv)
+
+if is_api_server:
+    # API 서버인 경우에만 NAVER API 검증 (실제로는 API 서버에서 사용 안 함)
+    # 하지만 config를 import할 때 검증되므로 일단 주석 처리
+    # assert NAVER_CLIENT_ID and NAVER_CLIENT_SECRET, "NAVER API env missing"
+    pass
+
 if ENABLE_DB_SAVE:
     assert DB_HOST and DB_USER and DB_PASSWORD and DB_NAME, "DB env missing"
-assert NAVER_CLIENT_ID and NAVER_CLIENT_SECRET, "NAVER API env missing"
