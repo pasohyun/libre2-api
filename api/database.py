@@ -77,9 +77,12 @@ def init_db():
             link TEXT,
             image_url TEXT,
             card_image_path TEXT,
+            channel VARCHAR(50),
+            market VARCHAR(100),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             INDEX idx_unit_price (unit_price),
-            INDEX idx_created_at (created_at)
+            INDEX idx_created_at (created_at),
+            INDEX idx_channel (channel)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """)
     

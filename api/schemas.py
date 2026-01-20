@@ -12,6 +12,8 @@ class Product(BaseModel):
     calc_method: str
     link: str
     image_url: str
+    channel: str | None = None
+    market: str | None = None
 
 class ProductListResponse(BaseModel):
     snapshot_time: Optional[datetime] = None

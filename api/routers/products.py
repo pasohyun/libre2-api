@@ -19,7 +19,10 @@ def get_db():
 def get_latest_products(db: Session = Depends(get_db)):
     try:
         rows = db.execute(text("""
-            SELECT *
+            SELECT 
+                keyword, product_name, unit_price, quantity, total_price,
+                mall_name, calc_method, link, image_url, card_image_path,
+                channel, market, created_at
             FROM products
             WHERE created_at = (
                 SELECT MAX(created_at) FROM products
