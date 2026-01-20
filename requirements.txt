@@ -12,6 +12,7 @@ pymysql
 sqlalchemy
 python-dotenv
 mysql-connector-python
+cryptography  # MySQL 8.0 인증 방식 지원
 
 # -----------------------
 # Crawling / HTTP
