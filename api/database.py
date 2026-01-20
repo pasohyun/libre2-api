@@ -7,12 +7,19 @@ import config
 
 # Railway 배포 시 환경 변수 필수
 # 로컬 개발 시에는 환경 변수가 없으면 기본값 사용
-IS_RAILWAY = os.getenv("RAILWAY_ENVIRONMENT") is not None or os.getenv("RAILWAY") is not None
+IS_RAILWAY = (
+    os.getenv("RAILWAY_ENVIRONMENT") is not None 
+    or os.getenv("RAILWAY") is not None
+    or os.getenv("PORT") is not None  # Railway는 PORT 환경 변수를 자동 설정
+)
 
 if IS_RAILWAY:
     # Railway에서는 환경 변수 필수
-    assert config.DB_HOST and config.DB_USER and config.DB_PASSWORD and config.DB_NAME, \
-        "DB environment variables are required in Railway"
+    if not (config.DB_HOST and config.DB_USER and config.DB_PASSWORD and config.DB_NAME):
+        raise ValueError(
+            "DB environment variables are required in Railway. "
+            "Please set DB_HOST, DB_USER, DB_PASSWORD, and DB_NAME in Railway Variables."
+        )
     DB_USER = config.DB_USER
     DB_PASSWORD = config.DB_PASSWORD
     DB_HOST = config.DB_HOST

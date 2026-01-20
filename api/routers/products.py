@@ -35,6 +35,9 @@ def get_latest_products(db: Session = Depends(get_db)):
             "data": rows
         }
     except Exception as e:
+        import traceback
+        error_detail = f"Database error: {str(e)}\n{traceback.format_exc()}"
+        print(f"Error in get_latest_products: {error_detail}")  # 로그에 출력
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 @router.get("/lowest")
@@ -55,4 +58,7 @@ def get_lowest_products(
             "data": rows
         }
     except Exception as e:
+        import traceback
+        error_detail = f"Database error: {str(e)}\n{traceback.format_exc()}"
+        print(f"Error in get_latest_products: {error_detail}")  # 로그에 출력
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
