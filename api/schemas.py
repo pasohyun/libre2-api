@@ -14,6 +14,6 @@ class Product(BaseModel):
     image_url: str
 
 class ProductListResponse(BaseModel):
-    snapshot_time: Optional[datetime]
+    snapshot_time: Optional[datetime] = None
     count: int
     data: List[Product]
