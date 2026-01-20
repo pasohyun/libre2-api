@@ -13,14 +13,29 @@ IS_RAILWAY = (
     or os.getenv("PORT") is not None  # Railway는 PORT 환경 변수를 자동 설정
 )
 
+# 디버깅: Railway 환경 변수 확인
+if IS_RAILWAY:
+    print(f"🔍 Railway 환경 감지됨")
+    print(f"   MYSQLHOST: {os.getenv('MYSQLHOST')}")
+    print(f"   MYSQLUSER: {os.getenv('MYSQLUSER')}")
+    print(f"   MYSQLDATABASE: {os.getenv('MYSQLDATABASE')}")
+    print(f"   PORT: {os.getenv('PORT')}")
+
 if IS_RAILWAY:
     # Railway MySQL 서비스의 환경 변수 사용 (자동 설정됨)
     # Railway가 MySQL 서비스를 추가하면 MYSQL* 환경 변수를 자동으로 설정합니다
-    DB_HOST = os.getenv("MYSQLHOST") or config.DB_HOST
-    DB_USER = os.getenv("MYSQLUSER") or config.DB_USER
-    DB_PASSWORD = os.getenv("MYSQLPASSWORD") or config.DB_PASSWORD
-    DB_NAME = os.getenv("MYSQLDATABASE") or config.DB_NAME
-    DB_PORT = int(os.getenv("MYSQLPORT", config.DB_PORT or 3306))
+    # 또는 MySQL 서비스의 변수 참조: ${{ MySQL.MYSQLHOST }} 형식
+    DB_HOST = os.getenv("MYSQLHOST") or os.getenv("MYSQL_HOST") or config.DB_HOST
+    DB_USER = os.getenv("MYSQLUSER") or os.getenv("MYSQL_USER") or config.DB_USER
+    DB_PASSWORD = os.getenv("MYSQLPASSWORD") or os.getenv("MYSQL_PASSWORD") or config.DB_PASSWORD
+    DB_NAME = os.getenv("MYSQLDATABASE") or os.getenv("MYSQL_DATABASE") or config.DB_NAME
+    DB_PORT = int(os.getenv("MYSQLPORT") or os.getenv("MYSQL_PORT") or config.DB_PORT or 3306)
+    
+    print(f"📊 사용할 DB 설정:")
+    print(f"   DB_HOST: {DB_HOST}")
+    print(f"   DB_USER: {DB_USER}")
+    print(f"   DB_NAME: {DB_NAME}")
+    print(f"   DB_PORT: {DB_PORT}")
     
     # Railway MySQL 환경 변수 또는 수동 설정된 환경 변수 확인
     if not (DB_HOST and DB_USER and DB_PASSWORD and DB_NAME):
