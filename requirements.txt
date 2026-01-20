@@ -1,0 +1,26 @@
+# -----------------------
+# Backend (API 서버)
+# -----------------------
+fastapi
+uvicorn[standard]
+gunicorn
+
+# -----------------------
+# Database
+# -----------------------
+pymysql
+sqlalchemy
+python-dotenv
+mysql-connector-python
+
+# -----------------------
+# Crawling / HTTP
+# -----------------------
+requests
+beautifulsoup4
+lxml
+
+# -----------------------
+# Time / Scheduling
+# -----------------------
+python-dateutil
