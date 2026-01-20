@@ -1,6 +1,6 @@
 # api/schemas.py
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 
 class Product(BaseModel):
@@ -14,6 +14,6 @@ class Product(BaseModel):
     image_url: str
 
 class ProductListResponse(BaseModel):
-    snapshot_time: datetime
+    snapshot_time: Optional[datetime]
     count: int
     data: List[Product]
