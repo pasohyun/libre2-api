@@ -128,15 +128,23 @@ def save_to_db(rows):
         db_password = os.getenv("MYSQLPASSWORD")
         db_name = os.getenv("MYSQLDATABASE")
         db_port = int(os.getenv("MYSQLPORT", 3306))
-    else:
-        if not config.ENABLE_DB_SAVE:
-            print("DB 저장 비활성화 상태입니다.")
-            return 0
+    elif config.DB_HOST:
+        # 일반 환경 변수 사용
         db_host = config.DB_HOST
         db_user = config.DB_USER
         db_password = config.DB_PASSWORD
         db_name = config.DB_NAME
         db_port = config.DB_PORT
+    else:
+        # Railway 환경인데 MySQL 환경 변수가 없음
+        print("❌ DB 연결 정보가 없습니다.")
+        print("   Railway 환경에서는 Cron Job 서비스의 Variables에 다음을 추가하세요:")
+        print("   MYSQLHOST = ${{ MySQL.MYSQLHOST }}")
+        print("   MYSQLUSER = ${{ MySQL.MYSQLUSER }}")
+        print("   MYSQLPASSWORD = ${{ MySQL.MYSQLPASSWORD }}")
+        print("   MYSQLDATABASE = ${{ MySQL.MYSQLDATABASE }}")
+        print("   MYSQLPORT = ${{ MySQL.MYSQLPORT }}")
+        return 0
 
     conn = mysql.connector.connect(
         host=db_host,
