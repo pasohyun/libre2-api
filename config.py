@@ -26,33 +26,4 @@ ENABLE_CARD_RENDER = os.getenv("ENABLE_CARD_RENDER", "false").lower() == "true"
 NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 
-# Railway 배포를 위한 환경 변수 검증
-# API 서버가 아닌 경우(예: worker 서비스)에는 선택적으로 검증
-import sys
-is_api_server = "api.main" in " ".join(sys.argv) or "gunicorn" in " ".join(sys.argv)
-
-if is_api_server:
-    # API 서버인 경우에만 NAVER API 검증 (실제로는 API 서버에서 사용 안 함)
-    # 하지만 config를 import할 때 검증되므로 일단 주석 처리
-    # assert NAVER_CLIENT_ID and NAVER_CLIENT_SECRET, "NAVER API env missing"
-    pass
-
-# DB 환경 변수 검증 (Railway 또는 일반 환경 변수 중 하나라도 있으면 OK)
-# 크롤링 스크립트 실행 시에는 검증 건너뛰기 (save_to_db 함수에서 직접 확인)
-is_crawler = "crawl_naver" in " ".join(sys.argv) or "scripts.crawl_naver" in " ".join(sys.argv)
-
-if ENABLE_DB_SAVE and not is_crawler:
-    # Railway 환경 변수 또는 일반 환경 변수 중 하나라도 있으면 통과
-    has_railway_db = all([
-        os.getenv("MYSQLHOST"),
-        os.getenv("MYSQLUSER"),
-        os.getenv("MYSQLPASSWORD"),
-        os.getenv("MYSQLDATABASE")
-    ])
-    has_regular_db = all([DB_HOST, DB_USER, DB_PASSWORD, DB_NAME])
-    
-    if not (has_railway_db or has_regular_db):
-        raise AssertionError(
-            "DB env missing. Railway 환경에서는 MYSQLHOST, MYSQLUSER, MYSQLPASSWORD, MYSQLDATABASE를, "
-            "일반 환경에서는 DB_HOST, DB_USER, DB_PASSWORD, DB_NAME을 설정하세요."
-        )
+# 검증은 실제 사용 시점에 수행 (save_to_db, database.py 등에서)
