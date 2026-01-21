@@ -121,6 +121,13 @@ def get_naver_data_all(query):
 def save_to_db(rows):
     import os
     
+    # 디버깅: 환경 변수 확인
+    print(f"🔍 환경 변수 확인:")
+    print(f"   MYSQLHOST: {os.getenv('MYSQLHOST')}")
+    print(f"   MYSQLUSER: {os.getenv('MYSQLUSER')}")
+    print(f"   MYSQLDATABASE: {os.getenv('MYSQLDATABASE')}")
+    print(f"   DB_HOST: {config.DB_HOST}")
+    
     # Railway 환경에서는 자동으로 MySQL 환경 변수 사용
     if os.getenv("MYSQLHOST"):
         db_host = os.getenv("MYSQLHOST")
@@ -128,6 +135,7 @@ def save_to_db(rows):
         db_password = os.getenv("MYSQLPASSWORD")
         db_name = os.getenv("MYSQLDATABASE")
         db_port = int(os.getenv("MYSQLPORT", 3306))
+        print(f"✅ Railway MySQL 환경 변수 사용: {db_host}:{db_port}")
     elif config.DB_HOST:
         # 일반 환경 변수 사용
         db_host = config.DB_HOST
