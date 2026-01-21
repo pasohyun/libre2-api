@@ -38,7 +38,10 @@ if is_api_server:
     pass
 
 # DB 환경 변수 검증 (Railway 또는 일반 환경 변수 중 하나라도 있으면 OK)
-if ENABLE_DB_SAVE:
+# 크롤링 스크립트 실행 시에는 검증 건너뛰기 (save_to_db 함수에서 직접 확인)
+is_crawler = "crawl_naver" in " ".join(sys.argv) or "scripts.crawl_naver" in " ".join(sys.argv)
+
+if ENABLE_DB_SAVE and not is_crawler:
     # Railway 환경 변수 또는 일반 환경 변수 중 하나라도 있으면 통과
     has_railway_db = all([
         os.getenv("MYSQLHOST"),
