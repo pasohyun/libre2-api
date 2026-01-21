@@ -20,8 +20,10 @@ cryptography  # MySQL 8.0 인증 방식 지원
 requests
 beautifulsoup4
 lxml
+pandas  # crawl_naver.py에서 import (현재 미사용이지만 호환성을 위해 유지)
 
 # -----------------------
 # Time / Scheduling
 # -----------------------
 python-dateutil
+schedule
