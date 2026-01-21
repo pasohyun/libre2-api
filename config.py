@@ -12,11 +12,12 @@ COUPANG_SEARCH_URL = "https://www.coupang.com/np/search?q={}"
 MAX_QUANTITY = 7
 
 # MySQL (환경변수 기반)
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = int(os.getenv("DB_PORT", 3306))
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_NAME = os.getenv("DB_NAME")
+# Railway 환경 변수 우선, 없으면 일반 환경 변수 사용
+DB_HOST = os.getenv("MYSQLHOST") or os.getenv("DB_HOST")
+DB_PORT = int(os.getenv("MYSQLPORT") or os.getenv("DB_PORT", 3306))
+DB_USER = os.getenv("MYSQLUSER") or os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("MYSQLPASSWORD") or os.getenv("DB_PASSWORD")
+DB_NAME = os.getenv("MYSQLDATABASE") or os.getenv("DB_NAME")
 DB_TABLE = os.getenv("DB_TABLE", "products")
 
 ENABLE_DB_SAVE = os.getenv("ENABLE_DB_SAVE", "false").lower() == "true"
@@ -36,5 +37,19 @@ if is_api_server:
     # assert NAVER_CLIENT_ID and NAVER_CLIENT_SECRET, "NAVER API env missing"
     pass
 
+# DB 환경 변수 검증 (Railway 또는 일반 환경 변수 중 하나라도 있으면 OK)
 if ENABLE_DB_SAVE:
-    assert DB_HOST and DB_USER and DB_PASSWORD and DB_NAME, "DB env missing"
+    # Railway 환경 변수 또는 일반 환경 변수 중 하나라도 있으면 통과
+    has_railway_db = all([
+        os.getenv("MYSQLHOST"),
+        os.getenv("MYSQLUSER"),
+        os.getenv("MYSQLPASSWORD"),
+        os.getenv("MYSQLDATABASE")
+    ])
+    has_regular_db = all([DB_HOST, DB_USER, DB_PASSWORD, DB_NAME])
+    
+    if not (has_railway_db or has_regular_db):
+        raise AssertionError(
+            "DB env missing. Railway 환경에서는 MYSQLHOST, MYSQLUSER, MYSQLPASSWORD, MYSQLDATABASE를, "
+            "일반 환경에서는 DB_HOST, DB_USER, DB_PASSWORD, DB_NAME을 설정하세요."
+        )
