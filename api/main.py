@@ -19,6 +19,7 @@ app.add_middleware(
         "https://libre-price-monitor-client.vercel.app",  # Vercel Production 도메인
         "https://*.vercel.app",   # Vercel 모든 프리뷰 도메인
     ],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
