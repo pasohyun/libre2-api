@@ -203,10 +203,6 @@ def get_naver_data_all(query):
                     print(f"  ⛔ 제외 (카테고리: {category2}/{category3}): {title[:40]}...")
                     continue
 
-                # 패치/커버 등 센서가 아닌 제품 제외
-                if is_excluded_product(title):
-                    continue
-
                 qty, unit_price, method = analyze_product(title, total_price)
 
                 if unit_price < 65000:
