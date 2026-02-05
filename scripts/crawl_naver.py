@@ -50,6 +50,52 @@ def analyze_product(title, total_price):
             return extracted_qty, calc_unit_price, "확인필요"
 
 
+def is_excluded_product(title):
+    """패치/커버/액세서리 등 센서가 아닌 제품 제외"""
+    title_lower = title.lower()
+    
+    # 제외할 키워드 (센서가 아닌 액세서리 제품)
+    exclude_keywords = [
+        "패치",        # CGM 패치, 방수 패치
+        "커버",        # 센서 커버
+        "스킨그립",    # Skin Grip
+        "skin grip",
+        "cgm patch",
+        "patches",     # 25 CGM Patches
+        "보호필름",
+        "보호 필름",
+        "방수필름",
+        "방수 필름",
+        "접착패드",
+        "접착 패드",
+        "오버패치",
+        "over patch",
+        "테이프",
+        "케이스",
+        "파우치",
+        "홀더",
+        "암밴드",
+        "peelz",       # Peelz 브랜드 (패치)
+    ]
+    
+    for keyword in exclude_keywords:
+        if keyword in title_lower:
+            return True
+    
+    # "센서" 또는 "리브레2"가 포함되어 있지 않으면 제외
+    # (단, 이미 위에서 패치/커버가 걸러졌으므로 추가 안전장치)
+    must_include = ["센서", "리브레2", "리브레 2", "libre 2", "libre2"]
+    has_required = any(kw in title_lower for kw in must_include)
+    
+    # 패치/커버 키워드가 없고, 필수 키워드도 없으면 제외
+    if not has_required:
+        # "프리스타일"이 있으면 일단 포함 (센서일 가능성)
+        if "프리스타일" not in title_lower and "freestyle" not in title_lower:
+            return True
+    
+    return False
+
+
 def get_naver_data_all(query):
     enc = urllib.parse.quote(query)
     all_results = []
@@ -84,6 +130,10 @@ def get_naver_data_all(query):
                 image_url = item.get("image", "")
                 mall = item.get("mallName", "")
                 link = item.get("link", "")
+
+                # 패치/커버 등 센서가 아닌 제품 제외
+                if is_excluded_product(title):
+                    continue
 
                 qty, unit_price, method = analyze_product(title, total_price)
 
