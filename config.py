@@ -26,4 +26,12 @@ ENABLE_CARD_RENDER = os.getenv("ENABLE_CARD_RENDER", "false").lower() == "true"
 NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 
+# 가격 모니터링 설정
+TARGET_PRICE = int(os.getenv("TARGET_PRICE", 90000))  # 기준가 (이 가격 이하면 알림)
+
+# 주요 판매처 목록 (환경변수로 설정 가능, 쉼표로 구분)
+# 예: TRACKED_MALLS=레디투힐,무화당,메디프라,글루어트
+_tracked_malls_env = os.getenv("TRACKED_MALLS", "")
+TRACKED_MALLS = [m.strip() for m in _tracked_malls_env.split(",") if m.strip()] if _tracked_malls_env else []
+
 # 검증은 실제 사용 시점에 수행 (save_to_db, database.py 등에서)
