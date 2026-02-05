@@ -65,3 +65,69 @@ def get_lowest_products(
         error_detail = f"Database error: {str(e)}\n{traceback.format_exc()}"
         print(f"Error in get_lowest_products: {error_detail}")  # 로그에 출력
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@router.get("/malls/stats")
+def get_mall_statistics(db: Session = Depends(get_db)):
+    """
+    판매처별 통계 조회
+    - 상품 수, 최저가, 평균가, 최근 등장 횟수
+    """
+    try:
+        # 전체 기간 판매처별 통계
+        rows = db.execute(text("""
+            SELECT 
+                mall_name,
+                COUNT(*) as total_count,
+                MIN(unit_price) as min_price,
+                MAX(unit_price) as max_price,
+                ROUND(AVG(unit_price)) as avg_price,
+                COUNT(DISTINCT DATE(created_at)) as days_appeared
+            FROM products
+            GROUP BY mall_name
+            ORDER BY total_count DESC
+            LIMIT 50
+        """)).mappings().all()
+
+        return {
+            "description": "판매처별 전체 기간 통계 (상품 수 기준 정렬)",
+            "count": len(rows),
+            "data": rows
+        }
+    except Exception as e:
+        import traceback
+        print(f"Error in get_mall_statistics: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@router.get("/malls/top")
+def get_top_malls(
+    limit: int = Query(10, ge=1, le=30),
+    db: Session = Depends(get_db)
+):
+    """
+    주요 판매처 TOP N (최근 크롤링 기준, 최저가 순)
+    """
+    try:
+        rows = db.execute(text("""
+            SELECT 
+                mall_name,
+                MIN(unit_price) as lowest_price,
+                COUNT(*) as product_count,
+                ROUND(AVG(unit_price)) as avg_price
+            FROM products
+            WHERE created_at = (SELECT MAX(created_at) FROM products)
+            GROUP BY mall_name
+            ORDER BY lowest_price ASC
+            LIMIT :limit
+        """), {"limit": limit}).mappings().all()
+
+        return {
+            "description": "최근 크롤링 기준 판매처별 최저가 (낮은 순)",
+            "count": len(rows),
+            "data": rows
+        }
+    except Exception as e:
+        import traceback
+        print(f"Error in get_top_malls: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
