@@ -15,39 +15,87 @@ CLIENT_SECRET = config.NAVER_CLIENT_SECRET
 
 
 def analyze_product(title, total_price):
+    """
+    상품명에서 센서 수량과 단가를 분석
+    
+    핵심: 센서/측정기 수량만 추출, 사은품(패치, 알콜솜 등)은 무시
+    """
     clean_title = title
-
-    black_list = [
-        r"아메리카노\s*\d+개", r"커피\s*\d+잔", r"커피\s*\d+개",
-        r"패치\s*\d+매", r"패치\s*\d+개", r"알콜솜\s*\d+매",
-        r"방수필름\s*\d+매", r"멤버십\s*\d+일", r"유효기간\s*\d+일",
-        r"\d+일\s*체험", r"\d+일\s*멤버십"
+    
+    # 1. 사은품/증정품 관련 구문 전체 제거
+    # "+ 패치 2개", "패치 2매 증정", "알콜솜 증정" 등
+    gift_patterns = [
+        r"\+\s*패치\s*\d+\s*(개|매|장)?",      # + 패치 2개
+        r"패치\s*\d+\s*(개|매|장)?\s*(증정|사은품|포함)?",  # 패치 2개 증정
+        r"\+\s*알콜\s*(솜|스왑|스웹)?\s*\d+\s*(개|매|장)?",  # + 알콜솜 2매
+        r"알콜\s*(솜|스왑|스웹)?\s*\d+\s*(개|매|장)?\s*(증정|사은품|포함)?",
+        r"\+\s*방수\s*(필름|패치)?\s*\d+\s*(개|매|장)?",
+        r"방수\s*(필름|패치)?\s*\d+\s*(개|매|장)?\s*(증정|사은품|포함)?",
+        r"아메리카노\s*\d+\s*(개|잔)?",
+        r"커피\s*\d+\s*(개|잔)?",
+        r"멤버십\s*\d+\s*일",
+        r"\d+\s*일\s*(체험|멤버십)",
+        r"유효기간\s*\d+\s*일",
+        r"사은품[^+]*",                        # "사은품 ~" 전체
+        r"증정[^+]*",                          # "증정 ~" 전체
     ]
-    for pattern in black_list:
-        clean_title = re.sub(pattern, " ", clean_title)
-
-    qty_candidates = []
-    matches = re.findall(r"[\sxX](\d+)\s*(개|세트|팩|박스|ea|set)", clean_title, re.IGNORECASE)
-    for m in matches:
-        qty_candidates.append(int(m[0]))
-    matches_mul = re.findall(r"[xX*]\s*(\d+)", clean_title)
-    for m in matches_mul:
-        qty_candidates.append(int(m))
-
-    extracted_qty = qty_candidates[-1] if qty_candidates else 1
-
-    MIN_PRICE, MAX_PRICE = 65000, 130000
-    calc_unit_price = total_price // extracted_qty
-
+    
+    for pattern in gift_patterns:
+        clean_title = re.sub(pattern, " ", clean_title, flags=re.IGNORECASE)
+    
+    # 2. 센서/측정기 관련 수량 우선 추출
+    # "측정기 2개", "센서 3개입", "리브레2 x3" 등
+    sensor_qty_patterns = [
+        r"(측정기|센서|리브레\s*2?)\s*(\d+)\s*(개|개입|세트|팩|박스)",  # 측정기 2개
+        r"(\d+)\s*(개|개입|세트|팩|박스)\s*(측정기|센서)",              # 2개 측정기
+        r"(측정기|센서|리브레)\s*[xX*]\s*(\d+)",                       # 센서 x3
+    ]
+    
+    sensor_qty = None
+    for pattern in sensor_qty_patterns:
+        match = re.search(pattern, clean_title, re.IGNORECASE)
+        if match:
+            # 숫자가 있는 그룹 찾기
+            for group in match.groups():
+                if group and group.isdigit():
+                    sensor_qty = int(group)
+                    break
+            if sensor_qty:
+                break
+    
+    # 3. 센서 수량을 못 찾으면 일반 패턴으로 추출
+    if sensor_qty is None:
+        qty_candidates = []
+        
+        # 일반 수량 패턴 (공백 또는 x 뒤의 숫자 + 단위)
+        matches = re.findall(r"[\s](\d+)\s*(개|개입|세트|팩|박스|ea|set)", clean_title, re.IGNORECASE)
+        for m in matches:
+            qty_candidates.append(int(m[0]))
+        
+        # x3, X5, *2 패턴
+        matches_mul = re.findall(r"[xX*]\s*(\d+)", clean_title)
+        for m in matches_mul:
+            qty_candidates.append(int(m))
+        
+        # 첫 번째로 찾은 숫자 사용 (마지막이 아닌 첫 번째 - 보통 메인 상품이 앞에 옴)
+        sensor_qty = qty_candidates[0] if qty_candidates else 1
+    
+    # 4. 단가 계산 및 검증
+    MIN_PRICE, MAX_PRICE = 65000, 160000
+    calc_unit_price = total_price // sensor_qty if sensor_qty > 0 else total_price
+    
     if MIN_PRICE <= calc_unit_price <= MAX_PRICE:
-        return extracted_qty, calc_unit_price, "텍스트분석"
+        return sensor_qty, calc_unit_price, "텍스트분석"
     else:
+        # 가격 역산으로 수량 추정
         estimated_qty = round(total_price / 90000) or 1
-        recalc_price = total_price // estimated_qty
+        recalc_price = total_price // estimated_qty if estimated_qty > 0 else total_price
+        
         if MIN_PRICE <= recalc_price <= MAX_PRICE:
             return estimated_qty, recalc_price, "가격역산(보정)"
         else:
-            return extracted_qty, calc_unit_price, "확인필요"
+            # 그래도 안 맞으면 원래 계산값 반환
+            return sensor_qty, calc_unit_price, "확인필요"
 
 
 def is_excluded_product(title):
