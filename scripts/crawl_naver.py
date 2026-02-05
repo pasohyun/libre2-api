@@ -188,6 +188,20 @@ def get_naver_data_all(query):
                 image_url = item.get("image", "")
                 mall = item.get("mallName", "")
                 link = item.get("link", "")
+                
+                # 카테고리 정보
+                category1 = item.get("category1", "")
+                category2 = item.get("category2", "")
+                category3 = item.get("category3", "")
+                category4 = item.get("category4", "")
+                
+                # 카테고리 필터: "혈당계" 또는 "당뇨관리용품"이 있어야 함
+                valid_categories = ["혈당계", "혈당측정기", "당뇨관리용품", "당뇨"]
+                all_categories = f"{category1} {category2} {category3} {category4}".lower()
+                
+                if not any(cat in all_categories for cat in valid_categories):
+                    print(f"  ⛔ 제외 (카테고리: {category2}/{category3}): {title[:40]}...")
+                    continue
 
                 # 패치/커버 등 센서가 아닌 제품 제외
                 if is_excluded_product(title):
