@@ -100,71 +100,57 @@ def analyze_product(title, total_price):
 
 def is_excluded_product(title):
     """
-    메인 상품이 패치/커버/액세서리인 제품만 제외
+    프리스타일 리브레 센서 본품만 포함, 액세서리는 제외
     
-    제외 로직:
-    1. "숫자+팩/매 + 커버/패치" 패턴 → 제외 (예: "25팩 커버", "20매 패치")
-    2. 액세서리 브랜드/키워드가 메인인 경우 → 제외
-    3. "센서"가 있고 위 패턴이 없으면 → 포함
+    핵심 로직: "센서" 또는 "측정기"가 있어야 포함
     """
     title_lower = title.lower()
     
-    # 1. "숫자+팩/매 + 커버/패치" 패턴 체크 (액세서리 메인 상품)
-    # 예: "25팩 커버", "20매 패치", "10pack 패치"
+    # ========== 1. 필수 키워드 체크 ==========
+    # "센서" 또는 "측정기"가 없으면 무조건 제외
+    sensor_keywords = ["센서", "측정기", "sensor"]
+    has_sensor = any(kw in title_lower for kw in sensor_keywords)
+    
+    if not has_sensor:
+        print(f"  ⛔ 제외 (센서/측정기 없음): {title[:50]}...")
+        return True  # 제외
+    
+    # ========== 2. 액세서리 패턴 제외 ==========
+    # "센서"가 있어도 액세서리인 경우
+    
+    # 2-1. "숫자+팩/매 + 커버/패치" 패턴 (액세서리 대량팩)
     accessory_quantity_patterns = [
-        r"\d+\s*팩\s*(커버|패치|필름)",      # 25팩 커버, 20팩 패치
+        r"\d+\s*팩\s*(커버|패치|필름)",      # 25팩 커버
         r"\d+\s*매\s*(커버|패치|필름)",      # 20매 패치
-        r"\d+\s*pack\s*(커버|패치|cover|patch)",  # 25pack 커버
-        r"\d+\s*pcs\s*(커버|패치|cover|patch)",   # 25pcs 패치
-        r"\d+\s*개\s*(커버|패치)\s*(세트|팩|묶음)?",  # 20개 패치 세트
+        r"\d+\s*pack",                       # 40 Pack
+        r"\d+\s*pcs",                        # 25pcs
     ]
     
     for pattern in accessory_quantity_patterns:
         if re.search(pattern, title_lower):
-            print(f"  ⛔ 제외 (액세서리 수량팩): {title[:50]}...")
-            return True  # 제외
+            print(f"  ⛔ 제외 (액세서리 대량팩): {title[:50]}...")
+            return True
     
-    # 2. 액세서리 전용 브랜드/키워드 체크
-    accessory_brands = [
-        "스킨그립",    # Skin Grip 브랜드
-        "skin grip",
-        "peelz",       # Peelz 브랜드
-        "cgm patches", # CGM Patches 제품명
-        "cgm patch",
-        "simpatch",    # SimPatch 브랜드
-        "fixic",       # Fixic 브랜드
-        "rockadex",    # Rockadex 브랜드
+    # 2-2. 액세서리 키워드 (센서가 있어도 제외)
+    accessory_keywords = [
+        # 케이스/커버류
+        "홀스터", "holster", "케이스", "case", "파우치", "pouch",
+        "커버", "cover", "클립", "clip",
+        # 보호필름/패치류  
+        "보호기", "protector", "필름", "film", "스크린", "screen",
+        "패치", "patch", "스티커", "sticker", "테이프", "tape",
+        # 기타 액세서리
+        "랜야드", "lanyard", "스트랩", "strap", "밴드", "band",
+        "케이블", "cable", "충전", "charger", "charging",
+        "거치대", "holder", "stand",
     ]
     
-    for brand in accessory_brands:
-        if brand in title_lower:
-            print(f"  ⛔ 제외 (액세서리 브랜드): {title[:50]}...")
-            return True  # 제외
+    for keyword in accessory_keywords:
+        if keyword in title_lower:
+            print(f"  ⛔ 제외 (액세서리 키워드 '{keyword}'): {title[:50]}...")
+            return True
     
-    # 3. "센서" 없이 "커버/패치"만 있는 경우 제외
-    sensor_keywords = ["센서", "sensor"]
-    has_sensor = any(kw in title_lower for kw in sensor_keywords)
-    
-    accessory_keywords = ["커버", "패치", "cover", "patch", "필름", "테이프"]
-    has_accessory = any(kw in title_lower for kw in accessory_keywords)
-    
-    if has_accessory and not has_sensor:
-        print(f"  ⛔ 제외 (센서 없이 액세서리만): {title[:50]}...")
-        return True  # 제외
-    
-    # 4. "센서"가 있지만 "커버/패치"가 메인으로 보이는 경우
-    # "센서 커버", "센서용 패치" 등의 패턴
-    sensor_accessory_patterns = [
-        r"센서\s*(용|전용)?\s*(커버|패치|필름)",  # 센서 커버, 센서용 패치
-        r"(커버|패치|필름)\s*\d+\s*(팩|매|개)",   # 커버 25팩, 패치 20매
-    ]
-    
-    for pattern in sensor_accessory_patterns:
-        if re.search(pattern, title_lower):
-            print(f"  ⛔ 제외 (센서용 액세서리): {title[:50]}...")
-            return True  # 제외
-    
-    # 5. 그 외의 경우 포함
+    # ========== 3. 통과 ==========
     return False
 
 
@@ -209,7 +195,7 @@ def get_naver_data_all(query):
 
                 qty, unit_price, method = analyze_product(title, total_price)
 
-                if unit_price < 50000:
+                if unit_price < 65000:
                     continue
 
                 all_results.append({
