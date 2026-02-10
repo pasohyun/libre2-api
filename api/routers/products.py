@@ -339,3 +339,65 @@ def get_tracked_malls_trends(
         import traceback
         print(f"Error in get_tracked_malls_trends: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@router.get("/mall/timeline")
+def get_mall_timeline(
+    mall_name: str = Query(..., description="판매처 이름"),
+    days: int = Query(30, ge=1, le=90, description="조회 기간 (일)"),
+    db: Session = Depends(get_db)
+):
+    """
+    특정 판매처의 일별 가격 히스토리 (타임라인)
+    - 일별 최저가 상품 정보 (상품명, 가격, 수량, 단가, 링크, 이미지 등)
+    """
+    try:
+        rows = db.execute(text("""
+            SELECT 
+                p.product_name,
+                p.unit_price,
+                p.quantity,
+                p.total_price,
+                p.link,
+                p.image_url,
+                p.calc_method,
+                p.created_at,
+                DATE(p.created_at) as date
+            FROM products p
+            INNER JOIN (
+                SELECT DATE(created_at) as d, MIN(unit_price) as min_price
+                FROM products
+                WHERE mall_name = :mall_name
+                  AND created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)
+                GROUP BY DATE(created_at)
+            ) sub ON DATE(p.created_at) = sub.d AND p.unit_price = sub.min_price
+            WHERE p.mall_name = :mall_name
+              AND p.created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)
+            GROUP BY DATE(p.created_at)
+            ORDER BY date DESC
+        """), {"mall_name": mall_name, "days": days}).fetchall()
+
+        timeline = []
+        for row in rows:
+            timeline.append({
+                "capturedAt": row[7].strftime("%Y-%m-%d %H:%M") if hasattr(row[7], 'strftime') else str(row[7]),
+                "date": row[8].strftime("%Y-%m-%d") if hasattr(row[8], 'strftime') else str(row[8]),
+                "productName": row[0],
+                "unitPrice": row[1],
+                "pack": row[2],
+                "price": row[3],
+                "url": row[4] or "#",
+                "captureThumb": row[5] or "",
+                "calcMethod": row[6],
+            })
+
+        return {
+            "mall_name": mall_name,
+            "days": days,
+            "count": len(timeline),
+            "data": timeline
+        }
+    except Exception as e:
+        import traceback
+        print(f"Error in get_mall_timeline: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
