@@ -52,6 +52,8 @@ def analyze_product(title, total_price):
     ]
     
     sensor_qty = None
+    qty_from_text = False  # 텍스트에서 명확히 수량을 추출했는지 여부
+    
     for pattern in sensor_qty_patterns:
         match = re.search(pattern, clean_title, re.IGNORECASE)
         if match:
@@ -61,6 +63,7 @@ def analyze_product(title, total_price):
                     sensor_qty = int(group)
                     break
             if sensor_qty:
+                qty_from_text = True  # 센서/측정기 키워드와 함께 수량 확인됨
                 break
     
     # 3. 센서 수량을 못 찾으면 일반 패턴으로 추출
@@ -77,25 +80,33 @@ def analyze_product(title, total_price):
         for m in matches_mul:
             qty_candidates.append(int(m))
         
-        # 첫 번째로 찾은 숫자 사용 (마지막이 아닌 첫 번째 - 보통 메인 상품이 앞에 옴)
-        sensor_qty = qty_candidates[0] if qty_candidates else 1
+        if qty_candidates:
+            sensor_qty = qty_candidates[0]
+            qty_from_text = True  # 일반 패턴이지만 명시적 수량 있음
+        else:
+            sensor_qty = 1
+            qty_from_text = False  # 수량 정보 없음 (기본값 1)
     
     # 4. 단가 계산 및 검증
-    MIN_PRICE, MAX_PRICE = 65000, 160000
+    MIN_PRICE, MAX_PRICE = 65000, 180000
     calc_unit_price = total_price // sensor_qty if sensor_qty > 0 else total_price
     
     if MIN_PRICE <= calc_unit_price <= MAX_PRICE:
         return sensor_qty, calc_unit_price, "텍스트분석"
+    
+    # 텍스트에서 명확히 수량을 추출한 경우 → 가격 역산 하지 않고 텍스트 결과 신뢰
+    if qty_from_text:
+        return sensor_qty, calc_unit_price, "텍스트분석(범위초과)"
+    
+    # 수량 정보가 없었던 경우에만 가격 역산 시도
+    estimated_qty = round(total_price / 90000) or 1
+    recalc_price = total_price // estimated_qty if estimated_qty > 0 else total_price
+    
+    if MIN_PRICE <= recalc_price <= MAX_PRICE:
+        return estimated_qty, recalc_price, "가격역산(보정)"
     else:
-        # 가격 역산으로 수량 추정
-        estimated_qty = round(total_price / 90000) or 1
-        recalc_price = total_price // estimated_qty if estimated_qty > 0 else total_price
-        
-        if MIN_PRICE <= recalc_price <= MAX_PRICE:
-            return estimated_qty, recalc_price, "가격역산(보정)"
-        else:
-            # 그래도 안 맞으면 원래 계산값 반환
-            return sensor_qty, calc_unit_price, "확인필요"
+        # 그래도 안 맞으면 원래 계산값 반환
+        return sensor_qty, calc_unit_price, "확인필요"
 
 
 def get_naver_data_all(query):
