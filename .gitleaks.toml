@@ -1,0 +1,17 @@
+# gitleaks 설정 파일
+# 기본 룰셋을 사용하여 API 키, 비밀번호, 토큰 등을 자동 감지합니다.
+# 문서: https://github.com/gitleaks/gitleaks
+
+[extend]
+# gitleaks 기본 룰셋 사용
+useDefault = true
+
+# 스캔 제외 대상
+[allowlist]
+description = "허용 목록"
+
+# .env.example은 실제 시크릿이 없으므로 제외
+paths = [
+    '''.env\.example''',
+    '''\.gitleaks\.toml''',
+]

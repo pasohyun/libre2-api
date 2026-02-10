@@ -1,93 +1,155 @@
-# basic-template
+# 🔒 Basic Template — 시크릿 안전 프로젝트 템플릿
 
+> 기술 스택에 구애받지 않는 **범용 프로젝트 시작 템플릿**입니다.
+> **시크릿(비밀번호, API 키 등) 유출 방지**가 핵심 목적입니다.
 
+---
 
-## Getting started
+## 📁 파일 구성
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+| 파일 | 설명 |
+|------|------|
+| `.gitignore` | `.env`, 인증서, 빌드 산출물 등이 커밋되지 않도록 차단 |
+| `.env.example` | 환경변수 **키만** 정의한 템플릿 (실제 값 없음) |
+| `.gitleaks.toml` | gitleaks 시크릿 스캔 설정 |
+| `.gitlab-ci.yml` | CI 파이프라인 — push/MR 시 자동으로 시크릿 스캔 |
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+---
 
-## Add your files
+## 🚀 시작하기
 
-* [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+### 1. 이 템플릿으로 새 프로젝트 만들기
 
+GitLab에서 **Fork** 하거나, 새 프로젝트 생성 시 이 템플릿을 선택하세요.
+
+```bash
+git clone <프로젝트_URL>
+cd <프로젝트_이름>
 ```
-cd existing_repo
-git remote add origin http://175.45.205.248:3000/templates/basic-template.git
-git branch -M main
-git push -uf origin main
+
+### 2. 환경변수 설정 (로컬 개발)
+
+```bash
+# .env.example을 복사해서 .env 파일 생성
+cp .env.example .env
+
+# .env 파일을 열어 실제 값 입력
+# ⚠️ .env 파일은 .gitignore에 포함되어 있어 커밋되지 않습니다
 ```
 
-## Integrate with your tools
+### 3. CI/CD에서 시크릿 사용하기 (배포 시)
 
-* [Set up project integrations](http://175.45.205.248:3000/templates/basic-template/-/settings/integrations)
+CI/CD 환경에서는 `.env` 파일 대신 **GitLab Variables**를 사용합니다.
 
-## Collaborate with your team
+**설정 방법:**
+1. GitLab 프로젝트 → **Settings** → **CI/CD** → **Variables** 섹션 펼치기
+2. **Add variable** 클릭
+3. Key에 변수명 입력 (예: `DB_PASSWORD`), Value에 실제 값 입력
+4. **Mask variable** 체크 → CI 로그에 값이 노출되지 않음
+5. **Protect variable** 체크 → protected 브랜치에서만 사용 가능
+6. **Save variables** 클릭
 
-* [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+**파이프라인에서 사용:**
+```yaml
+deploy:
+  stage: deploy
+  script:
+    - echo "DB 연결: $DB_PASSWORD"   # GitLab Variable 자동 주입
+```
 
-## Test and Deploy
+---
 
-Use the built-in continuous integration in GitLab.
+## 🛡️ 시크릿 관리 규칙
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+### ❌ 절대 하지 마세요
 
-***
+- 코드에 비밀번호, API 키, 토큰을 **직접 작성**
+- `.env` 파일을 **커밋/push**
+- 인증서 파일(`.pem`, `.key` 등)을 **레포지토리에 포함**
+- `.gitignore`에서 시크릿 관련 항목을 **삭제**
 
-# Editing this README
+### ✅ 이렇게 하세요
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+- 로컬 개발: `.env` 파일에 값을 넣고, **절대 커밋하지 않기**
+- CI/CD 배포: **GitLab Variables**에 시크릿 등록
+- 새 환경변수 추가 시: `.env.example`에 **키만** 추가하고 커밋(로컬 실행 시 필요한 변수명 공유용)
+- 시크릿이 실수로 커밋되었다면: 즉시 해당 시크릿을 **무효화(재발급)** 하세요
 
-## Suggestions for a good README
+---
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+## 🔍 자동 시크릿 스캔 (gitleaks)
 
-## Name
-Choose a self-explaining name for your project.
+이 템플릿에는 **gitleaks**가 CI 파이프라인에 설정되어 있습니다.
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+### 동작 방식
+- **push** 또는 **Merge Request** 발생 시 자동 실행
+- 코드에서 비밀번호, API 키, 토큰 패턴을 감지
+- 시크릿이 발견되면 **파이프라인 실패** → MR 머지 차단
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+### 시크릿이 감지되었을 때
+1. CI/CD 파이프라인 로그에서 어떤 파일의 어떤 내용이 감지되었는지 확인
+2. 해당 시크릿을 코드에서 **제거**
+3. `.env` 또는 **GitLab Variables**로 이동
+4. 이미 push된 시크릿은 히스토리에 남으므로, 반드시 **시크릿 재발급** 필요
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+---
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+## ⏰ 주기적 자동 검사 (Schedule)
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+매일/매주 전체 코드를 스캔하고 싶다면 **GitLab Schedule** 기능을 켜세요.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+1. GitLab 프로젝트 → **Build** (또는 CI/CD) → **Pipeline schedules**
+2. **New schedule** 클릭
+3. 설명 입력 (예: `Daily Secret Scan`)
+4. 주기 설정 (예: `0 3 * * *` → 매일 새벽 3시)
+5. **Save pipeline schedule** 클릭
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+스캔 중 시크릿이 발견되면 **이메일 알림**이 발송됩니다.
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+---
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+## ❓ FAQ
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+### Q: `.env`와 `.env.example`의 차이가 뭔가요?
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+| | `.env` | `.env.example` |
+|---|--------|----------------|
+| 내용 | 실제 비밀번호, API 키 등 | 변수명만 (값 비어있음) |
+| 커밋 | ❌ (`.gitignore`에 포함) | ✅ (커밋해야 함) |
+| 용도 | 로컬 개발용 | 팀원에게 "어떤 변수가 필요한지" 알려주기 |
 
-## License
-For open source projects, say how it is licensed.
+### Q: 시크릿이 이미 커밋 히스토리에 남아있으면 어떡하나요?
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+`.gitignore`에 추가해도 **이전 커밋에는 남아있습니다.** 반드시:
+1. 해당 시크릿(비밀번호, API 키 등)을 **즉시 재발급**
+2. Git 히스토리에서 제거가 필요하면 관리자에게 문의
+
+### Q: 새로운 환경변수가 필요하면 어떻게 하나요?
+
+1. `.env.example`에 **키만** 추가하고 커밋
+2. `.env` 파일에 실제 값 추가 (커밋 안 함)
+3. CI/CD에서 필요하면 **GitLab Variables**에 등록
+
+### Q: 스케줄 스캔에서 문제가 발견되면 누구에게 이메일이 가나요?
+
+기본적으로 **스케줄 파이프라인을 생성한 사람(Owner)에게만** 발송됩니다.
+다른 팀원(Maintainer, Developer)들은 **별도 설정 없이는 받지 못합니다.**
+
+**팀 전체가 알림을 받으려면:**
+1. 프로젝트 `Settings` > `Integrations` > `Pipelines emails` 메뉴에서 수신할 이메일 주소들을 추가하세요.
+2. 또는 각 팀원이 `User Settings` > `Notifications`에서 해당 프로젝트 알림 레벨을 `Watch`로 설정해야 합니다.
+
+### Q: 파이프라인에 빌드/테스트/배포를 추가하고 싶어요
+
+`.gitlab-ci.yml` 파일의 주석 처리된 부분을 참고하여 프로젝트에 맞게 수정하세요.
+
+---
+
+## 🏗️ 프로젝트 구조 변경
+
+이 템플릿은 **시작점**입니다. 프로젝트에 맞게 자유롭게 수정하세요:
+
+- 소스 코드, 문서, 설정 파일 등을 추가
+- `.gitlab-ci.yml`에 빌드/테스트/배포 stage 추가
+- `.gitignore`에 프로젝트 특화 항목 추가
+- **단, 시크릿 관련 `.gitignore` 규칙은 삭제하지 마세요!**

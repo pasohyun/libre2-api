@@ -1,0 +1,55 @@
+# ============================================================
+# GitLab CI/CD 파이프라인
+# ============================================================
+# 이 파이프라인은 시크릿 유출을 방지하기 위해 gitleaks를 실행합니다.
+# 시크릿이 감지되면 파이프라인이 실패하여 MR 머지가 차단됩니다.
+#
+# 프로젝트에 맞게 build, test, deploy stage를 추가하세요.
+# CI/CD에서 시크릿이 필요하면 GitLab Variables를 사용하세요:
+#   Settings > CI/CD > Variables
+#
+# 예시) $DB_PASSWORD 라는 변수를 등록하면 스크립트에서 사용 가능:
+#   script:
+#     - echo "Connecting with password $DB_PASSWORD"
+# ============================================================
+
+stages:
+  - secret-scan
+  # - build       # 👈 프로젝트에 맞게 주석 해제 후 사용
+  # - test
+  # - deploy
+
+# -----------------------------------------------
+# 🔒 시크릿 스캔 (gitleaks)
+# -----------------------------------------------
+secret-scan:
+  stage: secret-scan
+  image:
+    name: zricethezav/gitleaks:latest
+    entrypoint: [""]
+  script:
+    - gitleaks detect --source . --verbose --redact
+  allow_failure: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+# -----------------------------------------------
+# 아래에 프로젝트별 build / test / deploy를 추가하세요
+# -----------------------------------------------
+# build:
+#   stage: build
+#   image: node:18          # 프로젝트 언어에 맞게 변경
+#   script:
+#     - npm install
+#     - npm run build
+#
+# deploy:
+#   stage: deploy
+#   script:
+#     - echo "Deploying with $API_KEY"   # GitLab Variable 사용 예시
+#   environment:
+#     name: production
+#   only:
+#     - main
