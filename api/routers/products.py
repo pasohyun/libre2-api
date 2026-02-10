@@ -352,6 +352,7 @@ def get_mall_timeline(
     - 일별 최저가 상품 정보 (상품명, 가격, 수량, 단가, 링크, 이미지 등)
     """
     try:
+        # 일별 최저가 상품 조회 (only_full_group_by 호환)
         rows = db.execute(text("""
             SELECT 
                 p.product_name,
@@ -361,35 +362,34 @@ def get_mall_timeline(
                 p.link,
                 p.image_url,
                 p.calc_method,
-                p.created_at,
-                DATE(p.created_at) as date
+                p.created_at
             FROM products p
-            INNER JOIN (
-                SELECT DATE(created_at) as d, MIN(unit_price) as min_price
-                FROM products
-                WHERE mall_name = :mall_name
-                  AND created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)
-                GROUP BY DATE(created_at)
-            ) sub ON DATE(p.created_at) = sub.d AND p.unit_price = sub.min_price
             WHERE p.mall_name = :mall_name
               AND p.created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)
-            GROUP BY DATE(p.created_at)
-            ORDER BY date DESC
+            ORDER BY p.created_at DESC
         """), {"mall_name": mall_name, "days": days}).fetchall()
 
-        timeline = []
+        # Python에서 일별 최저가만 추출 (날짜별 첫 번째 최저가 상품)
+        daily_best = {}
         for row in rows:
-            timeline.append({
-                "capturedAt": row[7].strftime("%Y-%m-%d %H:%M") if hasattr(row[7], 'strftime') else str(row[7]),
-                "date": row[8].strftime("%Y-%m-%d") if hasattr(row[8], 'strftime') else str(row[8]),
-                "productName": row[0],
-                "unitPrice": row[1],
-                "pack": row[2],
-                "price": row[3],
-                "url": row[4] or "#",
-                "captureThumb": row[5] or "",
-                "calcMethod": row[6],
-            })
+            date_key = row[7].strftime("%Y-%m-%d") if hasattr(row[7], 'strftime') else str(row[7])[:10]
+            unit_price = row[1]
+            
+            if date_key not in daily_best or unit_price < daily_best[date_key]["unitPrice"]:
+                daily_best[date_key] = {
+                    "capturedAt": row[7].strftime("%Y-%m-%d %H:%M") if hasattr(row[7], 'strftime') else str(row[7]),
+                    "date": date_key,
+                    "productName": row[0],
+                    "unitPrice": row[1],
+                    "pack": row[2],
+                    "price": row[3],
+                    "url": row[4] or "#",
+                    "captureThumb": row[5] or "",
+                    "calcMethod": row[6],
+                }
+
+        # 날짜 역순 정렬
+        timeline = [daily_best[k] for k in sorted(daily_best.keys(), reverse=True)]
 
         return {
             "mall_name": mall_name,
