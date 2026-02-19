@@ -278,7 +278,7 @@ def get_tracked_malls_summary(
 @router.get("/tracked-malls/trends")
 def get_tracked_malls_trends(
     malls: str = Query(None, description="판매처 목록 (쉼표 구분)"),
-    days: int = Query(7, ge=1, le=30, description="조회 기간 (일)"),
+    days: int = Query(30, ge=1, le=90, description="조회 기간 (일)"),
     db: Session = Depends(get_db)
 ):
     """
