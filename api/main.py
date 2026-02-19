@@ -2,6 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routers import health, products
+from api.routers import reports
 from api.database import init_db  # 테이블 자동 생성
 
 app = FastAPI(
@@ -42,3 +43,4 @@ def root():
 
 app.include_router(health.router)
 app.include_router(products.router)
+app.include_router(reports.router)
