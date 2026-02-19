@@ -1,10 +1,9 @@
+from __future__ import annotations
+
 # api/schemas.py
 from pydantic import BaseModel
 from typing import List, Optional, Any, Dict
 from datetime import datetime
-
-from __future__ import annotations
-
 class Product(BaseModel):
     product_name: str
     unit_price: int
