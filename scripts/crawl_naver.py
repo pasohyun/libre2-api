@@ -158,6 +158,21 @@ def get_naver_data_all(query):
                     print(f"  ⛔ 제외 (카테고리: {category2}/{category3}): {title[:40]}...")
                     continue
 
+                # 액세서리/부속품 키워드 제외 필터
+                accessory_keywords = [
+                    "스크린 프로텍터", "화면 보호", "보호필름", "보호 필름",
+                    "케이스", "커버", "파우치", "홀스터", "랜야드",
+                    "충전 케이블", "충전케이블", "USB 케이블",
+                    "스킨그립", "스킨 그립", "오버패치",
+                    "클립", "카라비너", "벨트 클립",
+                ]
+                title_lower = title.lower()
+                if any(kw.lower() in title_lower for kw in accessory_keywords):
+                    # 단, "센서"가 메인 상품명에 포함된 경우는 제외하지 않음
+                    if not re.search(r"센서\s*\d+\s*(개|팩|세트|박스)", title):
+                        print(f"  ⛔ 제외 (액세서리): {title[:50]}...")
+                        continue
+
                 qty, unit_price, method = analyze_product(title, total_price)
 
                 if unit_price < 65000:
@@ -227,14 +242,34 @@ def save_to_db(rows):
         print("   MYSQLPORT = ${{ MySQL.MYSQLPORT }}")
         return 0
 
-    conn = mysql.connector.connect(
-        host=db_host,
-        port=db_port,
-        user=db_user,
-        password=db_password,
-        database=db_name,
-        charset="utf8mb4",
-    )
+    import time
+    
+    max_retries = 3
+    conn = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            conn = mysql.connector.connect(
+                host=db_host,
+                port=db_port,
+                user=db_user,
+                password=db_password,
+                database=db_name,
+                charset="utf8mb4",
+                connection_timeout=10,
+            )
+            break
+        except mysql.connector.errors.OperationalError as e:
+            print(f"⚠️ DB 연결 실패 (시도 {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                wait = attempt * 5  # 5초, 10초, 15초
+                print(f"   {wait}초 후 재시도...")
+                time.sleep(wait)
+            else:
+                print("❌ DB 연결 최종 실패. 모든 재시도 소진.")
+                return 0
+    
+    if conn is None:
+        return 0
     cur = conn.cursor()
 
     sql = f"""
