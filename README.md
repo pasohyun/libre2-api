@@ -110,7 +110,7 @@ python -m scripts.crawl_naver
 │       └── products.py # 상품 데이터 API
 ├── scripts/            # 크롤링 스크립트
 │   ├── crawl_naver.py # 네이버 쇼핑 크롤링
-│   └── no.py          # 상품 분석 및 카드 생성
+│   └── render_evidence_card.py  # 증빙 카드 이미지 생성 (Playwright)
 ├── config.py          # 환경 변수 설정
 ├── Procfile           # Railway 배포 설정
 └── requirements.txt   # Python 패키지 의존성

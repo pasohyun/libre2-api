@@ -33,7 +33,7 @@ daewoong/
 │
 ├── scripts/                      # 크롤링 및 유틸리티 스크립트
 │   ├── crawl_naver.py           # 네이버 쇼핑 API 크롤링 (메인)
-│   ├── no.py                    # 상품 카드 이미지 생성 (부가 기능)
+│   ├── render_evidence_card.py  # 증빙 카드 이미지 생성 (Playwright)
 │   ├── add_columns.py           # DB 컬럼 추가 스크립트
 │   ├── update_db_schema.py      # DB 스키마 업데이트
 │   ├── update_railway_db.py     # Railway DB 업데이트
