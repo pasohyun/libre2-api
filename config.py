@@ -26,6 +26,9 @@ ENABLE_CARD_RENDER = os.getenv("ENABLE_CARD_RENDER", "false").lower() == "true"
 NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 
+COUPANG_ACCESS_KEY = os.getenv("COUPANG_ACCESS_KEY")
+COUPANG_SECRET_KEY = os.getenv("COUPANG_SECRET_KEY")
+
 # 가격 모니터링 설정
 TARGET_PRICE = int(os.getenv("TARGET_PRICE", 90000))  # 기준가 (이 가격 이하면 알림)
 
