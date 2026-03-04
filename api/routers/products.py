@@ -27,16 +27,24 @@ def get_latest_products(db: Session = Depends(get_db)):
     """
     try:
         rows = db.execute(text("""
+            WITH latest AS (
+                SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
+                FROM products
+                ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
+                LIMIT 1
+            )
             SELECT 
                 keyword, product_name, unit_price, quantity, total_price,
                 mall_name, calc_method, link,
                 COALESCE(card_image_path, image_url) AS image_url,
                 card_image_path,
                 channel, market,
-                COALESCE(snapshot_at, created_at) AS snapshot_time
-            FROM products
-            WHERE COALESCE(snapshot_at, created_at) = (
-                SELECT MAX(COALESCE(snapshot_at, created_at)) FROM products
+                COALESCE(p.snapshot_at, p.created_at) AS snapshot_time
+            FROM products p
+            CROSS JOIN latest l
+            WHERE (
+                (l.snapshot_id IS NOT NULL AND p.snapshot_id = l.snapshot_id)
+                OR (l.snapshot_id IS NULL AND COALESCE(p.snapshot_at, p.created_at) = l.snapshot_time)
             )
             ORDER BY unit_price ASC
         """)).mappings().all()
@@ -123,14 +131,22 @@ def get_top_malls(
     """
     try:
         rows = db.execute(text("""
+            WITH latest AS (
+                SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
+                FROM products
+                ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
+                LIMIT 1
+            )
             SELECT 
                 mall_name,
                 MIN(unit_price) as lowest_price,
                 COUNT(*) as product_count,
                 ROUND(AVG(unit_price)) as avg_price
-            FROM products
-            WHERE COALESCE(snapshot_at, created_at) = (
-                SELECT MAX(COALESCE(snapshot_at, created_at)) FROM products
+            FROM products p
+            CROSS JOIN latest l
+            WHERE (
+                (l.snapshot_id IS NOT NULL AND p.snapshot_id = l.snapshot_id)
+                OR (l.snapshot_id IS NULL AND COALESCE(p.snapshot_at, p.created_at) = l.snapshot_time)
             )
             GROUP BY mall_name
             ORDER BY lowest_price ASC
@@ -177,15 +193,23 @@ def get_products_below_target(
 
     try:
         rows = db.execute(text("""
+            WITH latest AS (
+                SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
+                FROM products
+                ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
+                LIMIT 1
+            )
             SELECT 
                 product_name, unit_price, quantity, total_price,
                 mall_name, calc_method, link,
                 COALESCE(card_image_path, image_url) AS image_url,
                 card_image_path,
-                COALESCE(snapshot_at, created_at) AS snapshot_time
-            FROM products
-            WHERE COALESCE(snapshot_at, created_at) = (
-                SELECT MAX(COALESCE(snapshot_at, created_at)) FROM products
+                COALESCE(p.snapshot_at, p.created_at) AS snapshot_time
+            FROM products p
+            CROSS JOIN latest l
+            WHERE (
+                (l.snapshot_id IS NOT NULL AND p.snapshot_id = l.snapshot_id)
+                OR (l.snapshot_id IS NULL AND COALESCE(p.snapshot_at, p.created_at) = l.snapshot_time)
             )
               AND unit_price <= :target_price
             ORDER BY unit_price ASC
@@ -220,10 +244,18 @@ def get_tracked_malls_summary(
         mall_list = config.TRACKED_MALLS
     else:
         top_malls = db.execute(text("""
+            WITH latest AS (
+                SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
+                FROM products
+                ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
+                LIMIT 1
+            )
             SELECT mall_name
-            FROM products
-            WHERE COALESCE(snapshot_at, created_at) = (
-                SELECT MAX(COALESCE(snapshot_at, created_at)) FROM products
+            FROM products p
+            CROSS JOIN latest l
+            WHERE (
+                (l.snapshot_id IS NOT NULL AND p.snapshot_id = l.snapshot_id)
+                OR (l.snapshot_id IS NULL AND COALESCE(p.snapshot_at, p.created_at) = l.snapshot_time)
             )
             GROUP BY mall_name
             ORDER BY MIN(unit_price) ASC
@@ -238,11 +270,19 @@ def get_tracked_malls_summary(
         results = []
         for mall_name in mall_list:
             current = db.execute(text("""
+                WITH latest AS (
+                    SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
+                    FROM products
+                    ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
+                    LIMIT 1
+                )
                 SELECT MIN(unit_price) as current_price
-                FROM products
-                WHERE mall_name = :mall_name
-                  AND COALESCE(snapshot_at, created_at) = (
-                      SELECT MAX(COALESCE(snapshot_at, created_at)) FROM products
+                FROM products p
+                CROSS JOIN latest l
+                WHERE p.mall_name = :mall_name
+                  AND (
+                      (l.snapshot_id IS NOT NULL AND p.snapshot_id = l.snapshot_id)
+                      OR (l.snapshot_id IS NULL AND COALESCE(p.snapshot_at, p.created_at) = l.snapshot_time)
                   )
             """), {"mall_name": mall_name}).fetchone()
 
@@ -309,10 +349,18 @@ def get_tracked_malls_trends(
         mall_list = config.TRACKED_MALLS
     else:
         top_malls = db.execute(text("""
+            WITH latest AS (
+                SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
+                FROM products
+                ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
+                LIMIT 1
+            )
             SELECT mall_name
-            FROM products
-            WHERE COALESCE(snapshot_at, created_at) = (
-                SELECT MAX(COALESCE(snapshot_at, created_at)) FROM products
+            FROM products p
+            CROSS JOIN latest l
+            WHERE (
+                (l.snapshot_id IS NOT NULL AND p.snapshot_id = l.snapshot_id)
+                OR (l.snapshot_id IS NULL AND COALESCE(p.snapshot_at, p.created_at) = l.snapshot_time)
             )
             GROUP BY mall_name
             ORDER BY MIN(unit_price) ASC

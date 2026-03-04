@@ -4,6 +4,7 @@ import urllib.parse
 import json
 import re
 import time
+import uuid
 from datetime import datetime
 
 import mysql.connector
@@ -15,6 +16,36 @@ from api.services.s3_storage import is_s3_enabled, upload_bytes
 
 CLIENT_ID = config.NAVER_CLIENT_ID
 CLIENT_SECRET = config.NAVER_CLIENT_SECRET
+
+
+def _dedupe_rows(rows):
+    """
+    동일 실행(run) 내 중복 상품 제거.
+    링크가 있으면 링크 기준, 없으면 핵심 필드 조합 기준으로 dedupe.
+    """
+    if not rows:
+        return []
+
+    seen = set()
+    deduped = []
+    for r in rows:
+        link = (r.get("link") or "").strip()
+        if link:
+            key = ("link", link)
+        else:
+            key = (
+                "fallback",
+                (r.get("mall_name") or "").strip(),
+                (r.get("product_name") or "").strip(),
+                int(r.get("unit_price") or 0),
+                int(r.get("quantity") or 0),
+                int(r.get("total_price") or 0),
+            )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(r)
+    return deduped
 
 
 def _upload_product_images_to_s3(rows, *, snapshot_id: str):
@@ -373,11 +404,14 @@ def run_crawling():
     keyword = config.SEARCH_KEYWORD
 
     rows = get_naver_data_all(keyword)
-    print(f"Fetched: {len(rows)} rows")
+    fetched_count = len(rows)
+    rows = _dedupe_rows(rows)
+    print(f"Fetched: {fetched_count} rows")
+    print(f"Deduped: {len(rows)} rows (removed {fetched_count - len(rows)})")
 
-    # ✅ (3) run_crawling에서 snapshot_id/snapshot_at 생성 후 save_to_db에 전달
-    snapshot_at = datetime.now().replace(minute=0, second=0, microsecond=0)
-    snapshot_id = snapshot_at.strftime("%Y%m%d%H")
+    # 실행 단위 snapshot_id/snapshot_at (초 단위 + UUID)로 고정해 run 간 혼합 방지
+    snapshot_at = datetime.now().replace(microsecond=0)
+    snapshot_id = f"{snapshot_at.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
 
     s3_uploaded = _upload_product_images_to_s3(rows, snapshot_id=snapshot_id)
     if s3_uploaded:
