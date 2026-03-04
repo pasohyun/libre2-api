@@ -22,6 +22,17 @@ DB_TABLE = os.getenv("DB_TABLE", "products")
 
 ENABLE_DB_SAVE = os.getenv("ENABLE_DB_SAVE", "false").lower() == "true"
 ENABLE_CARD_RENDER = os.getenv("ENABLE_CARD_RENDER", "false").lower() == "true"
+ENABLE_S3_UPLOAD = os.getenv("ENABLE_S3_UPLOAD", "false").lower() == "true"
+
+# S3 (AWS S3 / S3-compatible)
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_REGION = os.getenv("AWS_REGION", "ap-northeast-2")
+S3_BUCKET = os.getenv("S3_BUCKET")
+S3_PREFIX = os.getenv("S3_PREFIX", "libre2")
+S3_PUBLIC_BASE_URL = os.getenv("S3_PUBLIC_BASE_URL")  # e.g. CloudFront URL
+S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL")  # optional for S3-compatible storage
+S3_UPLOAD_MAX_PER_RUN = int(os.getenv("S3_UPLOAD_MAX_PER_RUN", "20"))
 
 NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")

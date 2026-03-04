@@ -7,11 +7,62 @@ from datetime import datetime
 
 import mysql.connector
 import pandas as pd
+import requests
 
 import config
+from api.services.s3_storage import is_s3_enabled, upload_bytes
 
 CLIENT_ID = config.NAVER_CLIENT_ID
 CLIENT_SECRET = config.NAVER_CLIENT_SECRET
+
+
+def _upload_product_images_to_s3(rows, *, snapshot_id: str):
+    """
+    최신 스냅샷 중 일부 상품 이미지를 S3에 업로드하고 card_image_path에 URL 저장.
+    비용/시간 제어를 위해 업로드 건수는 S3_UPLOAD_MAX_PER_RUN으로 제한.
+    """
+    if not rows or not is_s3_enabled():
+        return 0
+
+    max_upload = max(0, config.S3_UPLOAD_MAX_PER_RUN)
+    if max_upload == 0:
+        return 0
+
+    uploaded = 0
+    candidates = sorted(rows, key=lambda x: x.get("unit_price") or 0)
+
+    for idx, row in enumerate(candidates, start=1):
+        if uploaded >= max_upload:
+            break
+
+        image_url = (row.get("image_url") or "").strip()
+        if not image_url:
+            continue
+
+        try:
+            resp = requests.get(image_url, timeout=10)
+            resp.raise_for_status()
+
+            content_type = resp.headers.get("Content-Type", "").split(";")[0].strip() or "image/jpeg"
+            ext = ".jpg"
+            if content_type == "image/png":
+                ext = ".png"
+            elif content_type == "image/webp":
+                ext = ".webp"
+            elif content_type == "image/gif":
+                ext = ".gif"
+
+            key = (
+                f"{config.S3_PREFIX.strip('/')}/products/{snapshot_id}/"
+                f"{uploaded + 1:04d}_{idx:04d}{ext}"
+            )
+            s3_url = upload_bytes(content=resp.content, object_key=key, content_type=content_type)
+            row["card_image_path"] = s3_url
+            uploaded += 1
+        except Exception as e:
+            print(f"⚠️ S3 업로드 실패: {image_url} ({e})")
+
+    return uploaded
 
 
 def analyze_product(title, total_price):
@@ -324,6 +375,12 @@ def run_crawling():
     # ✅ (3) run_crawling에서 snapshot_id/snapshot_at 생성 후 save_to_db에 전달
     snapshot_at = datetime.now().replace(minute=0, second=0, microsecond=0)
     snapshot_id = snapshot_at.strftime("%Y%m%d%H")
+
+    s3_uploaded = _upload_product_images_to_s3(rows, snapshot_id=snapshot_id)
+    if s3_uploaded:
+        print(f"S3 uploaded: {s3_uploaded}")
+    elif config.ENABLE_S3_UPLOAD:
+        print("S3 upload enabled but 0 files uploaded")
 
     inserted = save_to_db(rows, snapshot_id=snapshot_id, snapshot_at=snapshot_at)
     print(f"DB inserted: {inserted}")
