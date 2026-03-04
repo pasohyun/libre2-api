@@ -187,7 +187,9 @@ async def _render_card_png_async(*, html_text: str, out_dir: str) -> str:
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1000, "height": 560})
-        await page.set_content(html_text, wait_until="networkidle")
+        # Avoid long hangs on external image/network requests in constrained runtimes.
+        await page.set_content(html_text, wait_until="domcontentloaded", timeout=15000)
+        await page.wait_for_timeout(300)
         await page.screenshot(path=out_path, full_page=False)
         await browser.close()
 
