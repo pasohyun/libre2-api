@@ -84,7 +84,8 @@ AWS_SECRET_ACCESS_KEY=your_secret_key
 AWS_REGION=ap-northeast-2
 S3_BUCKET=your_bucket_name
 S3_PREFIX=libre2
-S3_UPLOAD_MAX_PER_RUN=20
+# 0 또는 음수면 해당 실행의 전체 상품 카드를 업로드
+S3_UPLOAD_MAX_PER_RUN=0
 ENABLE_CARD_RENDER=true
 # S3_PUBLIC_BASE_URL=https://cdn.example.com  # CloudFront 사용 시
 # S3_ENDPOINT_URL=https://s3.ap-northeast-2.amazonaws.com  # S3 호환 스토리지 사용 시

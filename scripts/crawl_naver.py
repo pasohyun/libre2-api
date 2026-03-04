@@ -29,12 +29,11 @@ def _upload_product_images_to_s3(rows, *, snapshot_id: str):
         print("S3 card upload skipped: ENABLE_CARD_RENDER is false")
         return 0
 
-    max_upload = max(0, config.S3_UPLOAD_MAX_PER_RUN)
-    if max_upload == 0:
-        return 0
-
     uploaded = 0
     candidates = sorted(rows, key=lambda x: x.get("unit_price") or 0)
+    max_upload = config.S3_UPLOAD_MAX_PER_RUN
+    if max_upload <= 0:
+        max_upload = len(candidates)
 
     for idx, row in enumerate(candidates, start=1):
         if uploaded >= max_upload:

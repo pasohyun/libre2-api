@@ -32,7 +32,8 @@ S3_BUCKET = os.getenv("S3_BUCKET")
 S3_PREFIX = os.getenv("S3_PREFIX", "libre2")
 S3_PUBLIC_BASE_URL = os.getenv("S3_PUBLIC_BASE_URL")  # e.g. CloudFront URL
 S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL")  # optional for S3-compatible storage
-S3_UPLOAD_MAX_PER_RUN = int(os.getenv("S3_UPLOAD_MAX_PER_RUN", "20"))
+# <= 0 이면 해당 실행에서 생성된 모든 상품 카드를 업로드
+S3_UPLOAD_MAX_PER_RUN = int(os.getenv("S3_UPLOAD_MAX_PER_RUN", "0"))
 
 NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")

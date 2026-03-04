@@ -29,7 +29,9 @@ def get_latest_products(db: Session = Depends(get_db)):
         rows = db.execute(text("""
             SELECT 
                 keyword, product_name, unit_price, quantity, total_price,
-                mall_name, calc_method, link, image_url, card_image_path,
+                mall_name, calc_method, link,
+                COALESCE(card_image_path, image_url) AS image_url,
+                card_image_path,
                 channel, market,
                 COALESCE(snapshot_at, created_at) AS snapshot_time
             FROM products
@@ -177,7 +179,9 @@ def get_products_below_target(
         rows = db.execute(text("""
             SELECT 
                 product_name, unit_price, quantity, total_price,
-                mall_name, calc_method, link, image_url,
+                mall_name, calc_method, link,
+                COALESCE(card_image_path, image_url) AS image_url,
+                card_image_path,
                 COALESCE(snapshot_at, created_at) AS snapshot_time
             FROM products
             WHERE COALESCE(snapshot_at, created_at) = (
@@ -370,7 +374,7 @@ def get_mall_timeline(
                 p.quantity,
                 p.total_price,
                 p.link,
-                p.image_url,
+                COALESCE(p.card_image_path, p.image_url) AS image_url,
                 p.calc_method,
                 p.created_at
             FROM products p
