@@ -1,3 +1,4 @@
+import os
 import urllib.request
 import urllib.parse
 import json
@@ -10,6 +11,7 @@ import pandas as pd
 import requests
 
 import config
+from api.services.card_renderer import render_card_png
 from api.services.s3_storage import is_s3_enabled, upload_bytes
 
 CLIENT_ID = config.NAVER_CLIENT_ID
@@ -35,32 +37,45 @@ def _upload_product_images_to_s3(rows, *, snapshot_id: str):
         if uploaded >= max_upload:
             break
 
-        image_url = (row.get("image_url") or "").strip()
-        if not image_url:
-            continue
-
         try:
-            resp = requests.get(image_url, timeout=10)
-            resp.raise_for_status()
+            content = b""
+            content_type = "image/png"
+            ext = ".png"
 
-            content_type = resp.headers.get("Content-Type", "").split(";")[0].strip() or "image/jpeg"
-            ext = ".jpg"
-            if content_type == "image/png":
-                ext = ".png"
-            elif content_type == "image/webp":
-                ext = ".webp"
-            elif content_type == "image/gif":
-                ext = ".gif"
+            if config.ENABLE_CARD_RENDER:
+                captured_at = datetime.now()
+                local_png_path = render_card_png(
+                    product=row,
+                    out_dir=os.path.join("product_cards", snapshot_id),
+                    captured_at=captured_at,
+                )
+                with open(local_png_path, "rb") as f:
+                    content = f.read()
+            else:
+                image_url = (row.get("image_url") or "").strip()
+                if not image_url:
+                    continue
+                resp = requests.get(image_url, timeout=10)
+                resp.raise_for_status()
+                content = resp.content
+                content_type = resp.headers.get("Content-Type", "").split(";")[0].strip() or "image/jpeg"
+                ext = ".jpg"
+                if content_type == "image/png":
+                    ext = ".png"
+                elif content_type == "image/webp":
+                    ext = ".webp"
+                elif content_type == "image/gif":
+                    ext = ".gif"
 
             key = (
                 f"{config.S3_PREFIX.strip('/')}/products/{snapshot_id}/"
                 f"{uploaded + 1:04d}_{idx:04d}{ext}"
             )
-            s3_url = upload_bytes(content=resp.content, object_key=key, content_type=content_type)
+            s3_url = upload_bytes(content=content, object_key=key, content_type=content_type)
             row["card_image_path"] = s3_url
             uploaded += 1
         except Exception as e:
-            print(f"⚠️ S3 업로드 실패: {image_url} ({e})")
+            print(f"⚠️ S3 업로드 실패 (row #{idx}): {e}")
 
     return uploaded
 
