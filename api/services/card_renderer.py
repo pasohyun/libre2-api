@@ -195,13 +195,27 @@ async def _render_card_png_async(*, html_text: str, out_dir: str) -> str:
 
 
 def _install_playwright_chromium() -> None:
-    subprocess.run(
+    commands = [
+        [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
+        [sys.executable, "-m", "playwright", "install-deps", "chromium"],
         [sys.executable, "-m", "playwright", "install", "chromium"],
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
+    ]
+
+    last_error = None
+    for cmd in commands:
+        try:
+            subprocess.run(
+                cmd,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            return
+        except Exception as e:
+            last_error = e
+    if last_error:
+        raise last_error
 
 
 def render_card_png(*, product: dict, out_dir: str, captured_at: datetime) -> str:
