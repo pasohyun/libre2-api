@@ -92,6 +92,7 @@ ENABLE_CARD_RENDER=true
 
 `ENABLE_CARD_RENDER=true`이면 크롤링 시 상품 썸네일을 기반으로 증빙 카드 PNG를 생성한 뒤 S3에 업로드합니다.
 카드에는 생성 시각(KST), 단가, 총가격, 수량, 판매처, 링크가 포함됩니다.
+Railway에서 카드 렌더를 사용하려면 Linux 런타임 라이브러리가 필요하며, 본 저장소의 `nixpacks.toml`로 자동 설치됩니다.
 
 ### 실행 방법
 

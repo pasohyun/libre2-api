@@ -8,7 +8,6 @@ from datetime import datetime
 
 import mysql.connector
 import pandas as pd
-import requests
 
 import config
 from api.services.card_renderer import render_card_png
@@ -26,6 +25,10 @@ def _upload_product_images_to_s3(rows, *, snapshot_id: str):
     if not rows or not is_s3_enabled():
         return 0
 
+    if not config.ENABLE_CARD_RENDER:
+        print("S3 card upload skipped: ENABLE_CARD_RENDER is false")
+        return 0
+
     max_upload = max(0, config.S3_UPLOAD_MAX_PER_RUN)
     if max_upload == 0:
         return 0
@@ -38,34 +41,16 @@ def _upload_product_images_to_s3(rows, *, snapshot_id: str):
             break
 
         try:
-            content = b""
+            captured_at = datetime.now()
+            local_png_path = render_card_png(
+                product=row,
+                out_dir=os.path.join("product_cards", snapshot_id),
+                captured_at=captured_at,
+            )
+            with open(local_png_path, "rb") as f:
+                content = f.read()
             content_type = "image/png"
             ext = ".png"
-
-            if config.ENABLE_CARD_RENDER:
-                captured_at = datetime.now()
-                local_png_path = render_card_png(
-                    product=row,
-                    out_dir=os.path.join("product_cards", snapshot_id),
-                    captured_at=captured_at,
-                )
-                with open(local_png_path, "rb") as f:
-                    content = f.read()
-            else:
-                image_url = (row.get("image_url") or "").strip()
-                if not image_url:
-                    continue
-                resp = requests.get(image_url, timeout=10)
-                resp.raise_for_status()
-                content = resp.content
-                content_type = resp.headers.get("Content-Type", "").split(";")[0].strip() or "image/jpeg"
-                ext = ".jpg"
-                if content_type == "image/png":
-                    ext = ".png"
-                elif content_type == "image/webp":
-                    ext = ".webp"
-                elif content_type == "image/gif":
-                    ext = ".gif"
 
             key = (
                 f"{config.S3_PREFIX.strip('/')}/products/{snapshot_id}/"
@@ -75,7 +60,11 @@ def _upload_product_images_to_s3(rows, *, snapshot_id: str):
             row["card_image_path"] = s3_url
             uploaded += 1
         except Exception as e:
-            print(f"⚠️ S3 업로드 실패 (row #{idx}): {e}")
+            print(f"⚠️ 카드 렌더/S3 업로드 실패 (row #{idx}): {e}")
+            # 카드 렌더가 불가능한 런타임이면 연속 실패하므로 불필요한 반복을 중단
+            if "libglib-2.0.so.0" in str(e) or "BrowserType.launch" in str(e):
+                print("Playwright runtime dependency missing. Stop card upload loop.")
+                break
 
     return uploaded
 
