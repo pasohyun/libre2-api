@@ -13,6 +13,7 @@ class Product(BaseModel):
     calc_method: str
     link: str
     image_url: str
+    card_image_path: str | None = None
     channel: str | None = None
     market: str | None = None
 
