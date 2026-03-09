@@ -28,6 +28,10 @@ NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 
 COUPANG_ACCESS_KEY = os.getenv("COUPANG_ACCESS_KEY")
 COUPANG_SECRET_KEY = os.getenv("COUPANG_SECRET_KEY")
+COUPANG_URLS_FILE = os.getenv("COUPANG_URLS_FILE", "scripts/coupang_urls.json")
+COUPANG_REQUEST_TIMEOUT = int(os.getenv("COUPANG_REQUEST_TIMEOUT", "15"))
+CRAWL_MIN_SLEEP_SEC = float(os.getenv("CRAWL_MIN_SLEEP_SEC", "1.5"))
+CRAWL_MAX_SLEEP_SEC = float(os.getenv("CRAWL_MAX_SLEEP_SEC", "3.0"))
 
 # 가격 모니터링 설정
 TARGET_PRICE = int(os.getenv("TARGET_PRICE", 90000))  # 기준가 (이 가격 이하면 알림)
