@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from api.database import SessionLocal
 from api.schemas import ProductListResponse
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import threading
 import config
@@ -22,7 +22,9 @@ def _to_kst(dt):
     if dt is None:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        # products.snapshot_at is saved as KST-naive datetime in current DB flow.
+        # Treat naive values as KST to avoid double +9h conversion on response.
+        dt = dt.replace(tzinfo=KST)
     return dt.astimezone(KST)
 
 
