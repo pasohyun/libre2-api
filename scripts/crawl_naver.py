@@ -6,16 +6,38 @@ import re
 import time
 import uuid
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import mysql.connector
 import pandas as pd
 
 import config
-from api.services.card_renderer import render_card_png
-from api.services.s3_storage import is_s3_enabled, upload_bytes
+
+try:
+    from api.services.card_renderer import render_card_png
+    _card_renderer_import_error = None
+except Exception as e:
+    render_card_png = None
+    _card_renderer_import_error = e
+
+try:
+    from api.services.s3_storage import is_s3_enabled, upload_bytes
+    _s3_storage_import_error = None
+except Exception as e:
+    is_s3_enabled = None
+    upload_bytes = None
+    _s3_storage_import_error = e
 
 CLIENT_ID = config.NAVER_CLIENT_ID
 CLIENT_SECRET = config.NAVER_CLIENT_SECRET
+KST = ZoneInfo("Asia/Seoul")
+NAVER_API_TIMEOUT_SEC = int(os.getenv("NAVER_API_TIMEOUT_SEC", "20"))
+NAVER_API_MAX_RETRIES = int(os.getenv("NAVER_API_MAX_RETRIES", "3"))
+
+
+def _log(message: str):
+    # Cron 환경에서 출력 버퍼링으로 로그가 늦게 보이는 문제를 줄인다.
+    print(message, flush=True)
 
 
 def _dedupe_rows(rows):
@@ -53,15 +75,36 @@ def _upload_product_images_to_s3(rows, *, snapshot_id: str):
     최신 스냅샷 중 일부 상품 이미지를 S3에 업로드하고 card_image_path에 URL 저장.
     비용/시간 제어를 위해 업로드 건수는 S3_UPLOAD_MAX_PER_RUN으로 제한.
     """
-    if not rows or not is_s3_enabled():
+    if not rows:
         return 0
 
     if not config.ENABLE_CARD_RENDER:
-        print("S3 card upload skipped: ENABLE_CARD_RENDER is false")
+        _log("S3 card upload skipped: ENABLE_CARD_RENDER is false")
+        return 0
+
+    if _card_renderer_import_error is not None or render_card_png is None:
+        _log(f"S3 card upload skipped: card renderer import failed: {_card_renderer_import_error}")
+        return 0
+
+    if _s3_storage_import_error is not None or is_s3_enabled is None or upload_bytes is None:
+        _log(f"S3 card upload skipped: s3 storage import failed: {_s3_storage_import_error}")
+        return 0
+
+    if not is_s3_enabled():
         return 0
 
     uploaded = 0
-    candidates = sorted(rows, key=lambda x: x.get("unit_price") or 0)
+    consecutive_failures = 0
+    threshold = config.TARGET_PRICE
+    candidates = [r for r in rows if int(r.get("unit_price") or 0) <= threshold]
+    if not candidates:
+        _log(f"S3 card upload skipped: no products at or below target price ({threshold:,}원)")
+        return 0
+    candidates = sorted(candidates, key=lambda x: x.get("unit_price") or 0)
+    _log(
+        f"S3 card upload candidates: {len(candidates)} / {len(rows)} "
+        f"(<= {threshold:,}원)"
+    )
     max_upload = config.S3_UPLOAD_MAX_PER_RUN
     if max_upload <= 0:
         max_upload = len(candidates)
@@ -71,7 +114,7 @@ def _upload_product_images_to_s3(rows, *, snapshot_id: str):
             break
 
         try:
-            captured_at = datetime.now()
+            captured_at = datetime.now(KST)
             local_png_path = render_card_png(
                 product=row,
                 out_dir=os.path.join("product_cards", snapshot_id),
@@ -89,11 +132,25 @@ def _upload_product_images_to_s3(rows, *, snapshot_id: str):
             s3_url = upload_bytes(content=content, object_key=key, content_type=content_type)
             row["card_image_path"] = s3_url
             uploaded += 1
+            consecutive_failures = 0
         except Exception as e:
-            print(f"⚠️ 카드 렌더/S3 업로드 실패 (row #{idx}): {e}")
+            consecutive_failures += 1
+            _log(f"⚠️ 카드 렌더/S3 업로드 실패 (row #{idx}): {e}")
             # 카드 렌더가 불가능한 런타임이면 연속 실패하므로 불필요한 반복을 중단
-            if "libglib-2.0.so.0" in str(e) or "BrowserType.launch" in str(e):
-                print("Playwright runtime dependency missing. Stop card upload loop.")
+            error_text = str(e)
+            if "libglib-2.0.so.0" in error_text or "BrowserType.launch" in error_text:
+                _log("Playwright runtime dependency missing. Stop card upload loop.")
+                break
+            if (
+                "can't start new thread" in error_text
+                or "Resource temporarily unavailable" in error_text
+                or "Cannot allocate memory" in error_text
+                or "pthread_create failed" in error_text
+            ):
+                _log("Runtime resource limit reached during card rendering. Stop card upload loop.")
+                break
+            if consecutive_failures >= 5:
+                _log("Too many consecutive card upload failures. Stop card upload loop.")
                 break
 
     return uploaded
@@ -202,9 +259,23 @@ def get_naver_data_all(query):
         request.add_header("X-Naver-Client-Secret", CLIENT_SECRET)
 
         try:
-            response = urllib.request.urlopen(request)
+            response = None
+            for attempt in range(1, NAVER_API_MAX_RETRIES + 1):
+                try:
+                    response = urllib.request.urlopen(request, timeout=NAVER_API_TIMEOUT_SEC)
+                    break
+                except Exception as api_req_error:
+                    _log(
+                        f"API request failed (attempt {attempt}/{NAVER_API_MAX_RETRIES}): "
+                        f"{api_req_error}"
+                    )
+                    if attempt < NAVER_API_MAX_RETRIES:
+                        time.sleep(attempt)
+            if response is None:
+                _log("API request failed after retries; stop this crawl run.")
+                break
             if response.getcode() != 200:
-                print("API status:", response.getcode())
+                _log(f"API status: {response.getcode()}")
                 break
 
             data = json.loads(response.read().decode("utf-8"))
@@ -230,7 +301,7 @@ def get_naver_data_all(query):
                 all_categories = f"{category1} {category2} {category3} {category4}".lower()
 
                 if not any(cat in all_categories for cat in valid_categories):
-                    print(f"  ⛔ 제외 (카테고리: {category2}/{category3}): {title[:40]}...")
+                    _log(f"  ⛔ 제외 (카테고리: {category2}/{category3}): {title[:40]}...")
                     continue
 
                 # 액세서리/부속품 키워드 제외 필터
@@ -245,7 +316,7 @@ def get_naver_data_all(query):
                 if any(kw.lower() in title_lower for kw in accessory_keywords):
                     # 단, "센서"가 메인 상품명에 포함된 경우는 제외하지 않음
                     if not re.search(r"센서\s*\d+\s*(개|팩|세트|박스)", title):
-                        print(f"  ⛔ 제외 (액세서리): {title[:50]}...")
+                        _log(f"  ⛔ 제외 (액세서리): {title[:50]}...")
                         continue
 
                 qty, unit_price, method = analyze_product(title, total_price)
@@ -269,13 +340,13 @@ def get_naver_data_all(query):
                 })
 
             kept_now = len(all_results)
-            print(f"page start={start} fetched={len(items)} kept={kept_now - kept_before} kept_total={kept_now}")
+            _log(f"page start={start} fetched={len(items)} kept={kept_now - kept_before} kept_total={kept_now}")
 
             start += display
             time.sleep(0.2)
 
         except Exception as e:
-            print("API error:", e)
+            _log(f"API error: {e}")
             break
 
     return all_results
@@ -293,11 +364,11 @@ def _calc_valid(calc_method: str) -> int:
 def save_to_db(rows, *, snapshot_id: str, snapshot_at: datetime):
     import os
 
-    print(f"🔍 환경 변수 확인:")
-    print(f"   MYSQLHOST: {os.getenv('MYSQLHOST')}")
-    print(f"   MYSQLUSER: {os.getenv('MYSQLUSER')}")
-    print(f"   MYSQLDATABASE: {os.getenv('MYSQLDATABASE')}")
-    print(f"   DB_HOST: {config.DB_HOST}")
+    _log(f"🔍 환경 변수 확인:")
+    _log(f"   MYSQLHOST: {os.getenv('MYSQLHOST')}")
+    _log(f"   MYSQLUSER: {os.getenv('MYSQLUSER')}")
+    _log(f"   MYSQLDATABASE: {os.getenv('MYSQLDATABASE')}")
+    _log(f"   DB_HOST: {config.DB_HOST}")
 
     if os.getenv("MYSQLHOST"):
         db_host = os.getenv("MYSQLHOST")
@@ -305,7 +376,7 @@ def save_to_db(rows, *, snapshot_id: str, snapshot_at: datetime):
         db_password = os.getenv("MYSQLPASSWORD")
         db_name = os.getenv("MYSQLDATABASE")
         db_port = int(os.getenv("MYSQLPORT", 3306))
-        print(f"✅ Railway MySQL 환경 변수 사용: {db_host}:{db_port}")
+        _log(f"✅ Railway MySQL 환경 변수 사용: {db_host}:{db_port}")
     elif config.DB_HOST:
         db_host = config.DB_HOST
         db_user = config.DB_USER
@@ -313,13 +384,13 @@ def save_to_db(rows, *, snapshot_id: str, snapshot_at: datetime):
         db_name = config.DB_NAME
         db_port = config.DB_PORT
     else:
-        print("❌ DB 연결 정보가 없습니다.")
-        print("   Railway 환경에서는 Cron Job 서비스의 Variables에 다음을 추가하세요:")
-        print("   MYSQLHOST = ${{ MySQL.MYSQLHOST }}")
-        print("   MYSQLUSER = ${{ MySQL.MYSQLUSER }}")
-        print("   MYSQLPASSWORD = ${{ MySQL.MYSQLPASSWORD }}")
-        print("   MYSQLDATABASE = ${{ MySQL.MYSQLDATABASE }}")
-        print("   MYSQLPORT = ${{ MySQL.MYSQLPORT }}")
+        _log("❌ DB 연결 정보가 없습니다.")
+        _log("   Railway 환경에서는 Cron Job 서비스의 Variables에 다음을 추가하세요:")
+        _log("   MYSQLHOST = ${{ MySQL.MYSQLHOST }}")
+        _log("   MYSQLUSER = ${{ MySQL.MYSQLUSER }}")
+        _log("   MYSQLPASSWORD = ${{ MySQL.MYSQLPASSWORD }}")
+        _log("   MYSQLDATABASE = ${{ MySQL.MYSQLDATABASE }}")
+        _log("   MYSQLPORT = ${{ MySQL.MYSQLPORT }}")
         return 0
 
     import time
@@ -339,13 +410,13 @@ def save_to_db(rows, *, snapshot_id: str, snapshot_at: datetime):
             )
             break
         except mysql.connector.errors.OperationalError as e:
-            print(f"⚠️ DB 연결 실패 (시도 {attempt}/{max_retries}): {e}")
+            _log(f"⚠️ DB 연결 실패 (시도 {attempt}/{max_retries}): {e}")
             if attempt < max_retries:
                 wait = attempt * 5  # 5초, 10초, 15초
-                print(f"   {wait}초 후 재시도...")
+                _log(f"   {wait}초 후 재시도...")
                 time.sleep(wait)
             else:
-                print("❌ DB 연결 최종 실패. 모든 재시도 소진.")
+                _log("❌ DB 연결 최종 실패. 모든 재시도 소진.")
                 return 0
     
     if conn is None:
@@ -400,28 +471,33 @@ def save_to_db(rows, *, snapshot_id: str, snapshot_at: datetime):
 
 
 def run_crawling():
-    print(f"START: {datetime.now().isoformat(timespec='seconds')}")
+    _log(f"START: {datetime.now(KST).isoformat(timespec='seconds')}")
     keyword = config.SEARCH_KEYWORD
 
     rows = get_naver_data_all(keyword)
     fetched_count = len(rows)
     rows = _dedupe_rows(rows)
-    print(f"Fetched: {fetched_count} rows")
-    print(f"Deduped: {len(rows)} rows (removed {fetched_count - len(rows)})")
+    _log(f"Fetched: {fetched_count} rows")
+    _log(f"Deduped: {len(rows)} rows (removed {fetched_count - len(rows)})")
 
     # 실행 단위 snapshot_id/snapshot_at (초 단위 + UUID)로 고정해 run 간 혼합 방지
-    snapshot_at = datetime.now().replace(microsecond=0)
+    snapshot_at = datetime.now(KST).replace(microsecond=0)
     snapshot_id = f"{snapshot_at.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
 
-    s3_uploaded = _upload_product_images_to_s3(rows, snapshot_id=snapshot_id)
+    try:
+        s3_uploaded = _upload_product_images_to_s3(rows, snapshot_id=snapshot_id)
+    except Exception as e:
+        # 카드 렌더/S3 업로드는 부가 기능이므로 실패해도 DB 저장은 진행한다.
+        _log(f"⚠️ S3 card upload stage failed unexpectedly: {e}")
+        s3_uploaded = 0
     if s3_uploaded:
-        print(f"S3 uploaded: {s3_uploaded}")
+        _log(f"S3 uploaded: {s3_uploaded}")
     elif config.ENABLE_S3_UPLOAD:
-        print("S3 upload enabled but 0 files uploaded")
+        _log("S3 upload enabled but 0 files uploaded")
 
     inserted = save_to_db(rows, snapshot_id=snapshot_id, snapshot_at=snapshot_at)
-    print(f"DB inserted: {inserted}")
-    print(f"END: {datetime.now().isoformat(timespec='seconds')}")
+    _log(f"DB inserted: {inserted}")
+    _log(f"END: {datetime.now(KST).isoformat(timespec='seconds')}")
 
 
 if __name__ == "__main__":

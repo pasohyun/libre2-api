@@ -1,13 +1,45 @@
 # api/routers/products.py
-from fastapi import APIRouter, Query, Depends, HTTPException
+from fastapi import APIRouter, Query, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from api.database import SessionLocal
 from api.schemas import ProductListResponse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+import threading
 import config
 
 router = APIRouter(prefix="/products")
+KST = ZoneInfo("Asia/Seoul")
+_crawl_lock = threading.Lock()
+_crawl_running = False
+_crawl_last_started_at_kst = None
+_crawl_last_finished_at_kst = None
+_crawl_last_error = None
+
+
+def _to_kst(dt):
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(KST)
+
+
+def _run_crawl_job():
+    global _crawl_running, _crawl_last_started_at_kst, _crawl_last_finished_at_kst, _crawl_last_error
+    try:
+        from scripts.crawl_naver import run_crawling
+
+        _crawl_last_started_at_kst = datetime.now(KST)
+        _crawl_last_error = None
+        run_crawling()
+    except Exception as e:
+        _crawl_last_error = str(e)
+    finally:
+        _crawl_last_finished_at_kst = datetime.now(KST)
+        with _crawl_lock:
+            _crawl_running = False
 
 
 def get_db():
@@ -49,7 +81,7 @@ def get_latest_products(db: Session = Depends(get_db)):
             ORDER BY unit_price ASC
         """)).mappings().all()
 
-        snapshot_time = rows[0]["snapshot_time"] if rows else None
+        snapshot_time = _to_kst(rows[0]["snapshot_time"]) if rows else None
 
         return {
             "snapshot_time": snapshot_time,
@@ -215,7 +247,7 @@ def get_products_below_target(
             ORDER BY unit_price ASC
         """), {"target_price": price}).mappings().all()
 
-        snapshot_time = rows[0]["snapshot_time"] if rows else None
+        snapshot_time = _to_kst(rows[0]["snapshot_time"]) if rows else None
 
         return {
             "target_price": price,
@@ -433,12 +465,13 @@ def get_mall_timeline(
 
         daily_best = {}
         for row in rows:
-            date_key = row[7].strftime("%Y-%m-%d") if hasattr(row[7], 'strftime') else str(row[7])[:10]
+            captured_at_kst = _to_kst(row[7]) if hasattr(row[7], "strftime") else None
+            date_key = captured_at_kst.strftime("%Y-%m-%d") if captured_at_kst else str(row[7])[:10]
             unit_price = row[1]
 
             if date_key not in daily_best or unit_price < daily_best[date_key]["unitPrice"]:
                 daily_best[date_key] = {
-                    "capturedAt": row[7].strftime("%Y-%m-%d %H:%M") if hasattr(row[7], 'strftime') else str(row[7]),
+                    "capturedAt": captured_at_kst.strftime("%Y-%m-%d %H:%M") if captured_at_kst else str(row[7]),
                     "date": date_key,
                     "productName": row[0],
                     "unitPrice": row[1],
@@ -461,3 +494,33 @@ def get_mall_timeline(
         import traceback
         print(f"Error in get_mall_timeline: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@router.post("/crawl/run")
+def run_crawl_now(background_tasks: BackgroundTasks):
+    """
+    수동 크롤링 실행 트리거 (대시보드 버튼용)
+    - 이미 실행 중이면 중복 실행을 막는다.
+    """
+    global _crawl_running
+    with _crawl_lock:
+        if _crawl_running:
+            return {
+                "started": False,
+                "message": "Crawling job is already running",
+                "status": "running",
+            }
+        _crawl_running = True
+    background_tasks.add_task(_run_crawl_job)
+    return {"started": True, "message": "Crawling job started", "status": "started"}
+
+
+@router.get("/crawl/status")
+def get_crawl_status():
+    return {
+        "running": _crawl_running,
+        "last_started_at": _crawl_last_started_at_kst,
+        "last_finished_at": _crawl_last_finished_at_kst,
+        "last_error": _crawl_last_error,
+        "timezone": "Asia/Seoul",
+    }
