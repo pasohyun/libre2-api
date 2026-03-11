@@ -290,6 +290,8 @@ def get_naver_data_all(query):
                 total_price = int(item.get("lprice", 0) or 0)
                 image_url = item.get("image", "")
                 mall = item.get("mallName", "")
+                if (mall or "").strip() == "네이버":
+                    mall = "최저가비교"
                 link = item.get("link", "")
 
                 category1 = item.get("category1", "")
