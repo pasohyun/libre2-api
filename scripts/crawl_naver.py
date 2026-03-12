@@ -686,12 +686,16 @@ def run_crawling():
     inserted = save_to_db(rows, snapshot_id=snapshot_id, snapshot_at=snapshot_at)
     _log(f"DB inserted: {inserted}")
 
-    try:
-        s3_uploaded = _upload_product_images_to_s3(rows, snapshot_id=snapshot_id)
-    except Exception as e:
-        # 카드 렌더/S3 업로드는 부가 기능이므로 실패해도 크롤링은 성공 처리한다.
-        _log(f"⚠️ S3 card upload stage failed unexpectedly: {e}")
+    if not config.ENABLE_AUTO_CARD_RENDER:
+        _log("Auto card render/upload skipped: ENABLE_AUTO_CARD_RENDER is false")
         s3_uploaded = 0
+    else:
+        try:
+            s3_uploaded = _upload_product_images_to_s3(rows, snapshot_id=snapshot_id)
+        except Exception as e:
+            # 카드 렌더/S3 업로드는 부가 기능이므로 실패해도 크롤링은 성공 처리한다.
+            _log(f"⚠️ S3 card upload stage failed unexpectedly: {e}")
+            s3_uploaded = 0
 
     if s3_uploaded:
         _log(f"S3 uploaded: {s3_uploaded}")

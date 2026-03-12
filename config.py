@@ -23,6 +23,8 @@ DB_TABLE = os.getenv("DB_TABLE", "products")
 ENABLE_DB_SAVE = os.getenv("ENABLE_DB_SAVE", "false").lower() == "true"
 ENABLE_CARD_RENDER = os.getenv("ENABLE_CARD_RENDER", "false").lower() == "true"
 ENABLE_S3_UPLOAD = os.getenv("ENABLE_S3_UPLOAD", "false").lower() == "true"
+# false면 크롤링 중 자동 카드 생성은 건너뛰고, API 단건 생성만 허용한다.
+ENABLE_AUTO_CARD_RENDER = os.getenv("ENABLE_AUTO_CARD_RENDER", "true").lower() == "true"
 
 # S3 (AWS S3 / S3-compatible)
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
