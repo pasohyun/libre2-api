@@ -17,6 +17,7 @@ class Product(BaseModel):
     card_image_path: str | None = None
     channel: str | None = None
     market: str | None = None
+    snapshot_time: Optional[datetime] = None
 
 class ProductListResponse(BaseModel):
     snapshot_time: Optional[datetime] = None

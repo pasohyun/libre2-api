@@ -155,6 +155,56 @@ def get_latest_products(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 
+@router.get("/today", response_model=ProductListResponse)
+def get_today_products(db: Session = Depends(get_db)):
+    """
+    KST 기준 오늘(00:00~24:00) 누적 크롤링 상품 전체
+    """
+    try:
+        now_kst = datetime.now(KST)
+        day_start_kst = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end_kst = day_start_kst + timedelta(days=1)
+
+        # DB에는 KST-naive 시각을 저장하므로 tzinfo 제거 후 범위를 비교한다.
+        day_start = day_start_kst.replace(tzinfo=None)
+        day_end = day_end_kst.replace(tzinfo=None)
+
+        rows = db.execute(text("""
+            SELECT
+                p.id,
+                keyword, product_name, unit_price, quantity, total_price,
+                mall_name, calc_method, link,
+                p.image_url AS image_url,
+                card_image_path,
+                channel, market,
+                COALESCE(p.snapshot_at, p.created_at) AS snapshot_time
+            FROM products p
+            WHERE COALESCE(p.snapshot_at, p.created_at) >= :day_start
+              AND COALESCE(p.snapshot_at, p.created_at) < :day_end
+            ORDER BY COALESCE(p.snapshot_at, p.created_at) DESC, unit_price ASC, id DESC
+        """), {"day_start": day_start, "day_end": day_end}).mappings().all()
+
+        data = []
+        for r in rows:
+            item = dict(r)
+            signed_card = _to_display_image_url(item.get("card_image_path"))
+            item["card_image_path"] = signed_card
+            item["image_url"] = item.get("image_url") or ""
+            data.append(item)
+
+        snapshot_time = _to_kst(rows[0]["snapshot_time"]) if rows else None
+        return {
+            "snapshot_time": snapshot_time,
+            "count": len(data),
+            "data": data,
+        }
+    except Exception as e:
+        import traceback
+        error_detail = f"Database error: {str(e)}\n{traceback.format_exc()}"
+        print(f"Error in get_today_products: {error_detail}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
 @router.get("/lowest")
 def get_lowest_products(
     limit: int = Query(10, ge=1, le=50),
