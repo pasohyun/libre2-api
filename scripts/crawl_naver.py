@@ -567,6 +567,108 @@ def save_to_db(rows, *, snapshot_id: str, snapshot_at: datetime):
     return inserted
 
 
+def update_card_image_paths(rows, *, snapshot_id: str):
+    """
+    이미 저장된 동일 snapshot 행에 card_image_path만 후반 업데이트한다.
+    (DB 저장 선행 -> 카드 렌더/S3 후처리용)
+    """
+    rows_with_cards = [r for r in rows if _norm_text(r.get("card_image_path"))]
+    if not rows_with_cards:
+        return 0
+
+    import os
+    import time
+
+    if os.getenv("MYSQLHOST"):
+        db_host = os.getenv("MYSQLHOST")
+        db_user = os.getenv("MYSQLUSER")
+        db_password = os.getenv("MYSQLPASSWORD")
+        db_name = os.getenv("MYSQLDATABASE")
+        db_port = int(os.getenv("MYSQLPORT", 3306))
+    elif config.DB_HOST:
+        db_host = config.DB_HOST
+        db_user = config.DB_USER
+        db_password = config.DB_PASSWORD
+        db_name = config.DB_NAME
+        db_port = config.DB_PORT
+    else:
+        _log("⚠️ DB 연결 정보가 없어 card_image_path 후반 업데이트를 건너뜁니다.")
+        return 0
+
+    max_retries = 3
+    conn = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            conn = mysql.connector.connect(
+                host=db_host,
+                port=db_port,
+                user=db_user,
+                password=db_password,
+                database=db_name,
+                charset="utf8mb4",
+                connection_timeout=10,
+            )
+            break
+        except mysql.connector.errors.OperationalError as e:
+            _log(f"⚠️ DB 재연결 실패(카드 경로 업데이트, 시도 {attempt}/{max_retries}): {e}")
+            if attempt < max_retries:
+                time.sleep(attempt * 2)
+            else:
+                _log("⚠️ card_image_path 업데이트를 포기하고 종료합니다.")
+                return 0
+
+    if conn is None:
+        return 0
+
+    cur = conn.cursor()
+    updated = 0
+
+    for r in rows_with_cards:
+        card_image_path = _norm_text(r.get("card_image_path"))
+        link = _norm_text(r.get("link"))
+
+        if link:
+            cur.execute(
+                f"""
+                UPDATE {config.DB_TABLE}
+                SET card_image_path = %s
+                WHERE snapshot_id = %s
+                  AND link = %s
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (card_image_path, snapshot_id, link),
+            )
+        else:
+            cur.execute(
+                f"""
+                UPDATE {config.DB_TABLE}
+                SET card_image_path = %s
+                WHERE snapshot_id = %s
+                  AND channel = %s
+                  AND market = %s
+                  AND mall_name = %s
+                  AND product_name = %s
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (
+                    card_image_path,
+                    snapshot_id,
+                    _norm_text(r.get("channel")) or "naver",
+                    _norm_text(r.get("market")) or "스마트스토어",
+                    _norm_text(r.get("mall_name")),
+                    _norm_text(r.get("product_name")),
+                ),
+            )
+        updated += cur.rowcount
+
+    conn.commit()
+    cur.close()
+    conn.close()
+    return updated
+
+
 def run_crawling():
     _log(f"START: {datetime.now(KST).isoformat(timespec='seconds')}")
     keyword = config.SEARCH_KEYWORD
@@ -581,19 +683,23 @@ def run_crawling():
     snapshot_at = datetime.now(KST).replace(microsecond=0)
     snapshot_id = f"{snapshot_at.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
 
+    inserted = save_to_db(rows, snapshot_id=snapshot_id, snapshot_at=snapshot_at)
+    _log(f"DB inserted: {inserted}")
+
     try:
         s3_uploaded = _upload_product_images_to_s3(rows, snapshot_id=snapshot_id)
     except Exception as e:
-        # 카드 렌더/S3 업로드는 부가 기능이므로 실패해도 DB 저장은 진행한다.
+        # 카드 렌더/S3 업로드는 부가 기능이므로 실패해도 크롤링은 성공 처리한다.
         _log(f"⚠️ S3 card upload stage failed unexpectedly: {e}")
         s3_uploaded = 0
+
     if s3_uploaded:
         _log(f"S3 uploaded: {s3_uploaded}")
+        db_updated_cards = update_card_image_paths(rows, snapshot_id=snapshot_id)
+        _log(f"DB card_image_path updated: {db_updated_cards}")
     elif config.ENABLE_S3_UPLOAD:
         _log("S3 upload enabled but 0 files uploaded")
 
-    inserted = save_to_db(rows, snapshot_id=snapshot_id, snapshot_at=snapshot_at)
-    _log(f"DB inserted: {inserted}")
     _log(f"END: {datetime.now(KST).isoformat(timespec='seconds')}")
 
 
