@@ -33,6 +33,7 @@ CLIENT_SECRET = config.NAVER_CLIENT_SECRET
 KST = ZoneInfo("Asia/Seoul")
 NAVER_API_TIMEOUT_SEC = int(os.getenv("NAVER_API_TIMEOUT_SEC", "20"))
 NAVER_API_MAX_RETRIES = int(os.getenv("NAVER_API_MAX_RETRIES", "3"))
+VERBOSE_EXCLUDE_LOG = os.getenv("VERBOSE_EXCLUDE_LOG", "false").lower() == "true"
 
 
 def _log(message: str):
@@ -284,6 +285,8 @@ def get_naver_data_all(query):
                 break
 
             kept_before = len(all_results)
+            excluded_by_category = 0
+            excluded_by_accessory = 0
 
             for item in items:
                 title = item.get("title", "").replace("<b>", "").replace("</b>", "")
@@ -303,7 +306,9 @@ def get_naver_data_all(query):
                 all_categories = f"{category1} {category2} {category3} {category4}".lower()
 
                 if not any(cat in all_categories for cat in valid_categories):
-                    _log(f"  ⛔ 제외 (카테고리: {category2}/{category3}): {title[:40]}...")
+                    excluded_by_category += 1
+                    if VERBOSE_EXCLUDE_LOG:
+                        _log(f"  ⛔ 제외 (카테고리: {category2}/{category3}): {title[:40]}...")
                     continue
 
                 # 액세서리/부속품 키워드 제외 필터
@@ -318,7 +323,9 @@ def get_naver_data_all(query):
                 if any(kw.lower() in title_lower for kw in accessory_keywords):
                     # 단, "센서"가 메인 상품명에 포함된 경우는 제외하지 않음
                     if not re.search(r"센서\s*\d+\s*(개|팩|세트|박스)", title):
-                        _log(f"  ⛔ 제외 (액세서리): {title[:50]}...")
+                        excluded_by_accessory += 1
+                        if VERBOSE_EXCLUDE_LOG:
+                            _log(f"  ⛔ 제외 (액세서리): {title[:50]}...")
                         continue
 
                 qty, unit_price, method = analyze_product(title, total_price)
@@ -342,7 +349,13 @@ def get_naver_data_all(query):
                 })
 
             kept_now = len(all_results)
-            _log(f"page start={start} fetched={len(items)} kept={kept_now - kept_before} kept_total={kept_now}")
+            _log(
+                "page start="
+                f"{start} fetched={len(items)} kept={kept_now - kept_before} "
+                f"excluded_category={excluded_by_category} "
+                f"excluded_accessory={excluded_by_accessory} "
+                f"kept_total={kept_now}"
+            )
 
             start += display
             time.sleep(0.2)
