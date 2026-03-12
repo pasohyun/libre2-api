@@ -137,7 +137,8 @@ def get_latest_products(db: Session = Depends(get_db)):
             item = dict(r)
             signed_card = _to_display_image_url(item.get("card_image_path"))
             item["card_image_path"] = signed_card
-            item["image_url"] = signed_card or (item.get("image_url") or "")
+            # HTML 카드 미리보기는 원본 사이트 이미지를 유지한다.
+            item["image_url"] = item.get("image_url") or ""
             data.append(item)
 
         snapshot_time = _to_kst(rows[0]["snapshot_time"]) if rows else None
@@ -541,7 +542,9 @@ def get_mall_timeline(
                     "pack": row[3],
                     "price": row[4],
                     "url": row[5] or "#",
-                    "captureThumb": signed_card or (row[6] or ""),
+                    # HTML 카드 화면에서는 원본 사이트 이미지를 사용한다.
+                    "captureThumb": row[6] or "",
+                    "cardImagePath": signed_card or "",
                     "calcMethod": row[8],
                 }
 
