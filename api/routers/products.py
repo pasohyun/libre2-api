@@ -731,3 +731,55 @@ def generate_card_image(
         "card_image_path": display_url,
         "message": "Card image generated and saved",
     }
+
+
+@router.post("/manual-confirm")
+def manual_confirm_quantity(
+    product_id: int = Query(..., ge=1, description="products.id"),
+    quantity: int = Query(..., ge=1, description="확정 수량(개)"),
+    db: Session = Depends(get_db),
+):
+    """
+    수동확인 대상의 수량을 확정하여 단가를 재계산한다.
+    """
+    row = db.execute(
+        text("""
+            SELECT id, total_price
+            FROM products
+            WHERE id = :pid
+            LIMIT 1
+        """),
+        {"pid": product_id},
+    ).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    total_price = int(row["total_price"] or 0)
+    new_unit_price = total_price // quantity if quantity > 0 else total_price
+
+    db.execute(
+        text("""
+            UPDATE products
+            SET quantity = :quantity,
+                unit_price = :unit_price,
+                calc_method = :calc_method,
+                calc_valid = 1
+            WHERE id = :pid
+        """),
+        {
+            "quantity": quantity,
+            "unit_price": new_unit_price,
+            "calc_method": "수동확인(완료)",
+            "pid": product_id,
+        },
+    )
+    db.commit()
+
+    return {
+        "updated": True,
+        "product_id": product_id,
+        "quantity": quantity,
+        "unit_price": new_unit_price,
+        "calc_method": "수동확인(완료)",
+    }
