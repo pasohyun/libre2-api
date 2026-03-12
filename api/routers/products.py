@@ -27,11 +27,18 @@ except Exception as e:
     _card_renderer_import_error = e
 
 try:
-    from api.services.s3_storage import is_s3_enabled, upload_bytes
+    from api.services.s3_storage import (
+        is_s3_enabled,
+        upload_bytes,
+        generate_presigned_url,
+        extract_object_key,
+    )
     _s3_storage_import_error = None
 except Exception as e:
     is_s3_enabled = None
     upload_bytes = None
+    generate_presigned_url = None
+    extract_object_key = None
     _s3_storage_import_error = e
 
 
@@ -69,6 +76,30 @@ def get_db():
         db.close()
 
 
+def _to_display_image_url(value: str | None) -> str | None:
+    """
+    S3 private 객체는 presigned URL로 바꿔서 내려준다.
+    외부 이미지 URL(네이버 썸네일 등)은 원본 유지.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return None
+
+    if (
+        _s3_storage_import_error is None
+        and is_s3_enabled is not None
+        and generate_presigned_url is not None
+        and extract_object_key is not None
+        and is_s3_enabled()
+    ):
+        key = extract_object_key(raw)
+        if key:
+            signed = generate_presigned_url(key, expires_in=3600)
+            if signed:
+                return signed
+    return raw
+
+
 @router.get("/latest", response_model=ProductListResponse)
 def get_latest_products(db: Session = Depends(get_db)):
     """
@@ -88,7 +119,7 @@ def get_latest_products(db: Session = Depends(get_db)):
                 p.id,
                 keyword, product_name, unit_price, quantity, total_price,
                 mall_name, calc_method, link,
-                COALESCE(card_image_path, image_url) AS image_url,
+                p.image_url AS image_url,
                 card_image_path,
                 channel, market,
                 COALESCE(p.snapshot_at, p.created_at) AS snapshot_time
@@ -101,12 +132,20 @@ def get_latest_products(db: Session = Depends(get_db)):
             ORDER BY unit_price ASC
         """)).mappings().all()
 
+        data = []
+        for r in rows:
+            item = dict(r)
+            signed_card = _to_display_image_url(item.get("card_image_path"))
+            item["card_image_path"] = signed_card
+            item["image_url"] = signed_card or (item.get("image_url") or "")
+            data.append(item)
+
         snapshot_time = _to_kst(rows[0]["snapshot_time"]) if rows else None
 
         return {
             "snapshot_time": snapshot_time,
-            "count": len(rows),
-            "data": rows
+            "count": len(data),
+            "data": data
         }
     except Exception as e:
         import traceback
@@ -475,7 +514,8 @@ def get_mall_timeline(
                 p.quantity,
                 p.total_price,
                 p.link,
-                COALESCE(p.card_image_path, p.image_url) AS image_url,
+                p.image_url,
+                p.card_image_path,
                 p.calc_method,
                 p.created_at
             FROM products p
@@ -486,22 +526,23 @@ def get_mall_timeline(
 
         daily_best = {}
         for row in rows:
-            captured_at_kst = _to_kst(row[8]) if hasattr(row[8], "strftime") else None
-            date_key = captured_at_kst.strftime("%Y-%m-%d") if captured_at_kst else str(row[8])[:10]
+            captured_at_kst = _to_kst(row[9]) if hasattr(row[9], "strftime") else None
+            date_key = captured_at_kst.strftime("%Y-%m-%d") if captured_at_kst else str(row[9])[:10]
             unit_price = row[2]
 
             if date_key not in daily_best or unit_price < daily_best[date_key]["unitPrice"]:
+                signed_card = _to_display_image_url(row[7])
                 daily_best[date_key] = {
                     "id": row[1],
-                    "capturedAt": captured_at_kst.strftime("%Y-%m-%d %H:%M") if captured_at_kst else str(row[8]),
+                    "capturedAt": captured_at_kst.strftime("%Y-%m-%d %H:%M") if captured_at_kst else str(row[9]),
                     "date": date_key,
                     "productName": row[0],
                     "unitPrice": row[2],
                     "pack": row[3],
                     "price": row[4],
                     "url": row[5] or "#",
-                    "captureThumb": row[6] or "",
-                    "calcMethod": row[7],
+                    "captureThumb": signed_card or (row[6] or ""),
+                    "calcMethod": row[8],
                 }
 
         timeline = [daily_best[k] for k in sorted(daily_best.keys(), reverse=True)]
@@ -579,10 +620,11 @@ def generate_card_image(
         raise HTTPException(status_code=404, detail="Product not found")
 
     if row["card_image_path"]:
+        existing_display = _to_display_image_url(row["card_image_path"]) or row["card_image_path"]
         return {
             "created": False,
             "product_id": product_id,
-            "card_image_path": row["card_image_path"],
+            "card_image_path": existing_display,
             "message": "Card image already exists",
         }
 
@@ -610,26 +652,29 @@ def generate_card_image(
         )
         with open(local_png_path, "rb") as f:
             content = f.read()
-        s3_url = upload_bytes(content=content, object_key=object_key, content_type="image/png")
+        _ = upload_bytes(content=content, object_key=object_key, content_type="image/png")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Card generation failed: {e}")
+
+    stored_value = object_key
+    display_url = _to_display_image_url(stored_value) or stored_value
 
     link = (row["link"] or "").strip() if row.get("link") else ""
     if link:
         db.execute(
-            text("UPDATE products SET card_image_path = :url WHERE link = :link"),
-            {"url": s3_url, "link": link},
+            text("UPDATE products SET card_image_path = :value WHERE link = :link"),
+            {"value": stored_value, "link": link},
         )
     else:
         db.execute(
-            text("UPDATE products SET card_image_path = :url WHERE id = :pid"),
-            {"url": s3_url, "pid": product_id},
+            text("UPDATE products SET card_image_path = :value WHERE id = :pid"),
+            {"value": stored_value, "pid": product_id},
         )
     db.commit()
 
     return {
         "created": True,
         "product_id": product_id,
-        "card_image_path": s3_url,
+        "card_image_path": display_url,
         "message": "Card image generated and saved",
     }
