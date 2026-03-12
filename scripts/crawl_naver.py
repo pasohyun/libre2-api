@@ -386,7 +386,6 @@ def _row_state_signature(row: dict):
         int(row.get("total_price") or 0),
         _norm_text(row.get("calc_method")),
         _norm_text(row.get("image_url")),
-        _norm_text(row.get("card_image_path")),
     )
 
 
@@ -397,7 +396,6 @@ def _db_state_signature(db_row):
         int(db_row[2] or 0),
         _norm_text(db_row[3]),
         _norm_text(db_row[4]),
-        _norm_text(db_row[5]),
     )
 
 

@@ -614,10 +614,17 @@ def generate_card_image(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Card generation failed: {e}")
 
-    db.execute(
-        text("UPDATE products SET card_image_path = :url WHERE id = :pid"),
-        {"url": s3_url, "pid": product_id},
-    )
+    link = (row["link"] or "").strip() if row.get("link") else ""
+    if link:
+        db.execute(
+            text("UPDATE products SET card_image_path = :url WHERE link = :link"),
+            {"url": s3_url, "link": link},
+        )
+    else:
+        db.execute(
+            text("UPDATE products SET card_image_path = :url WHERE id = :pid"),
+            {"url": s3_url, "pid": product_id},
+        )
     db.commit()
 
     return {
