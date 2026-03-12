@@ -45,6 +45,55 @@ class MonthlySellerMetric(BaseModel):
     cross_platform_mismatch: Optional[bool] = None
 
 
+# ── Date-Range Report models ────────────────────────────────────────
+
+class DateRangeSummary(BaseModel):
+    below_threshold_seller_count: int
+    top5_lowest: List[Dict[str, Any]]
+    global_min_seller: Optional[str] = None
+    global_min_price: Optional[int] = None
+    global_min_time: Optional[datetime] = None
+
+
+class BelowThresholdItem(BaseModel):
+    seller_name: str
+    platform: str
+    unit_price: int
+    total_price: int
+    quantity: int
+    time: Optional[datetime] = None
+    link: Optional[str] = None
+    card_image_path: Optional[str] = None
+
+
+class ChartPoint(BaseModel):
+    date: str
+    min_price: int
+
+
+class SellerDetailCard(BaseModel):
+    seller_name: str
+    platform: str
+    min_unit_price: int
+    min_time: Optional[datetime] = None
+    total_price: int
+    quantity: int
+    link: Optional[str] = None
+    card_image_path: Optional[str] = None
+    chart_data: List[ChartPoint] = []
+
+
+class DateRangeReportResponse(BaseModel):
+    start_date: str
+    end_date: str
+    threshold_price: int
+    channel: str
+    summary: DateRangeSummary
+    below_threshold_list: List[BelowThresholdItem]
+    seller_cards: List[SellerDetailCard]
+    generated_at: Optional[datetime] = None
+
+
 class MonthlyReportResponse(BaseModel):
     month: str
     threshold_price: int
