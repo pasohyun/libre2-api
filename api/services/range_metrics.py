@@ -1,0 +1,230 @@
+from __future__ import annotations
+
+from collections import defaultdict
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+
+def _date_range(start_date: str, end_date: str) -> Tuple[str, str]:
+    """Return [start, end) timestamps. end_date is inclusive (up to 23:59:59)."""
+    start = f"{start_date} 00:00:00"
+    end = f"{end_date} 23:59:59"
+    return start, end
+
+
+def _snapshot_bucket(
+    snapshot_id: Optional[str],
+    snapshot_at: Optional[datetime],
+    created_at: datetime,
+) -> str:
+    if snapshot_id:
+        return snapshot_id
+    ts = snapshot_at or created_at
+    return ts.strftime("%Y-%m-%d %H")
+
+
+def _fetch_products(
+    db: Session, start: str, end: str, channel: str,
+) -> list:
+    return (
+        db.execute(
+            text(
+                """
+                SELECT
+                    mall_name,
+                    unit_price,
+                    total_price,
+                    quantity,
+                    link,
+                    image_url,
+                    card_image_path,
+                    calc_method,
+                    COALESCE(snapshot_at, created_at) AS ts,
+                    snapshot_id,
+                    snapshot_at,
+                    created_at,
+                    COALESCE(calc_valid, 1) AS calc_valid
+                FROM products
+                WHERE COALESCE(snapshot_at, created_at) >= :start
+                  AND COALESCE(snapshot_at, created_at) <= :end
+                  AND channel = :channel
+                """
+            ),
+            {"start": start, "end": end, "channel": channel},
+        )
+        .mappings()
+        .all()
+    )
+
+
+# ── 1) Summary-level seller metrics ────────────────────────────────
+def compute_seller_metrics(
+    db: Session,
+    *,
+    start_date: str,
+    end_date: str,
+    threshold_price: int,
+    channel: str = "naver",
+) -> Dict[str, Any]:
+    """Return summary dict: below_count, top5 sellers, global min."""
+    start, end = _date_range(start_date, end_date)
+    rows = _fetch_products(db, start, end, channel)
+
+    # bucket by seller -> snapshot to keep one price per observation
+    by_seller: Dict[str, Dict[str, Dict]] = defaultdict(dict)
+
+    for r in rows:
+        if int(r.get("calc_valid") or 1) != 1:
+            continue
+        seller = (r["mall_name"] or "").strip() or "(unknown)"
+        bucket = _snapshot_bucket(
+            r.get("snapshot_id"), r.get("snapshot_at"), r.get("created_at"),
+        )
+        cur = by_seller[seller].get(bucket)
+        if cur is None or r["unit_price"] < cur["unit_price"]:
+            by_seller[seller][bucket] = {
+                "unit_price": int(r["unit_price"]),
+                "ts": r["ts"],
+                "seller": seller,
+            }
+
+    # aggregate per seller
+    seller_stats: List[Dict[str, Any]] = []
+    for seller, buckets in by_seller.items():
+        items = list(buckets.values())
+        below = [x for x in items if x["unit_price"] <= threshold_price]
+        if not items:
+            continue
+        min_item = min(items, key=lambda x: (x["unit_price"], x["ts"]))
+        seller_stats.append({
+            "seller_name": seller,
+            "below_count": len(below),
+            "min_unit_price": min_item["unit_price"],
+            "min_time": min_item["ts"],
+        })
+
+    below_sellers = [s for s in seller_stats if s["below_count"] > 0]
+    below_sellers.sort(key=lambda x: x["min_unit_price"])
+
+    # top 5 lowest-price sellers
+    top5 = below_sellers[:5]
+
+    # global min
+    global_min_seller = None
+    global_min_price = None
+    global_min_time = None
+    if below_sellers:
+        g = below_sellers[0]
+        global_min_seller = g["seller_name"]
+        global_min_price = g["min_unit_price"]
+        global_min_time = g["min_time"]
+
+    return {
+        "below_threshold_seller_count": len(below_sellers),
+        "top5_lowest": [
+            {
+                "seller_name": s["seller_name"],
+                "min_unit_price": s["min_unit_price"],
+                "min_time": s["min_time"],
+            }
+            for s in top5
+        ],
+        "global_min_seller": global_min_seller,
+        "global_min_price": global_min_price,
+        "global_min_time": global_min_time,
+    }
+
+
+# ── 2) Below-threshold detail list ─────────────────────────────────
+def compute_below_threshold_detail(
+    db: Session,
+    *,
+    start_date: str,
+    end_date: str,
+    threshold_price: int,
+    channel: str = "naver",
+) -> List[Dict[str, Any]]:
+    """Return list of below-threshold records with card/capture info."""
+    start, end = _date_range(start_date, end_date)
+    rows = _fetch_products(db, start, end, channel)
+
+    # per seller+bucket keep the lowest-price record
+    by_seller: Dict[str, Dict[str, Dict]] = defaultdict(dict)
+    for r in rows:
+        if int(r.get("calc_valid") or 1) != 1:
+            continue
+        price = int(r["unit_price"])
+        if price > threshold_price:
+            continue
+        seller = (r["mall_name"] or "").strip() or "(unknown)"
+        bucket = _snapshot_bucket(
+            r.get("snapshot_id"), r.get("snapshot_at"), r.get("created_at"),
+        )
+        cur = by_seller[seller].get(bucket)
+        if cur is None or price < cur["unit_price"]:
+            by_seller[seller][bucket] = {
+                "seller_name": seller,
+                "platform": channel,
+                "unit_price": price,
+                "total_price": int(r.get("total_price") or 0),
+                "quantity": int(r.get("quantity") or 0),
+                "time": r["ts"],
+                "link": r.get("link"),
+                "card_image_path": r.get("card_image_path"),
+            }
+
+    # flatten, keep only the min per seller
+    seller_mins: Dict[str, Dict] = {}
+    for seller, buckets in by_seller.items():
+        for item in buckets.values():
+            cur = seller_mins.get(seller)
+            if cur is None or item["unit_price"] < cur["unit_price"]:
+                seller_mins[seller] = item
+
+    result = list(seller_mins.values())
+    result.sort(key=lambda x: (x["unit_price"], x["time"]))
+    return result
+
+
+# ── 3) Seller daily chart data ──────────────────────────────────────
+def compute_seller_chart_data(
+    db: Session,
+    *,
+    start_date: str,
+    end_date: str,
+    seller_names: Optional[List[str]] = None,
+    channel: str = "naver",
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Return {seller_name: [{date, min_price}, ...]} for daily chart."""
+    start, end = _date_range(start_date, end_date)
+    rows = _fetch_products(db, start, end, channel)
+
+    # bucket by seller -> date -> min price
+    by_seller_date: Dict[str, Dict[str, int]] = defaultdict(dict)
+
+    for r in rows:
+        if int(r.get("calc_valid") or 1) != 1:
+            continue
+        seller = (r["mall_name"] or "").strip() or "(unknown)"
+        if seller_names and seller not in seller_names:
+            continue
+        price = int(r["unit_price"])
+        ts = r["ts"]
+        date_str = ts.strftime("%Y-%m-%d") if isinstance(ts, datetime) else str(ts)[:10]
+
+        cur = by_seller_date[seller].get(date_str)
+        if cur is None or price < cur:
+            by_seller_date[seller][date_str] = price
+
+    result: Dict[str, List[Dict[str, Any]]] = {}
+    for seller, date_map in by_seller_date.items():
+        points = [
+            {"date": d, "min_price": p}
+            for d, p in sorted(date_map.items())
+        ]
+        result[seller] = points
+
+    return result
