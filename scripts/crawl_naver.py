@@ -206,20 +206,53 @@ def analyze_product(title, total_price):
                 qty_from_text = True
                 break
 
-    # 3. 센서 수량을 못 찾으면 일반 패턴으로 추출
-    if sensor_qty is None:
+    def _extract_qty_candidates(text: str):
         qty_candidates = []
 
-        matches = re.findall(r"[\s](\d+)\s*(개|개입|세트|팩|박스|ea|set)", clean_title, re.IGNORECASE)
+        matches = re.findall(
+            r"[\s](\d+)\s*(개|개입|세트|팩|박스|ea|set)",
+            text,
+            re.IGNORECASE,
+        )
         for m in matches:
             qty_candidates.append(int(m[0]))
 
-        matches_mul = re.findall(r"[xX*]\s*(\d+)", clean_title)
+        matches_mul = re.findall(r"[xX*]\s*(\d+)", text)
         for m in matches_mul:
             qty_candidates.append(int(m))
 
-        if qty_candidates:
-            sensor_qty = qty_candidates[0]
+        # 지나치게 큰 값/0은 노이즈로 간주
+        return [q for q in qty_candidates if 1 <= q <= 20]
+
+    def _pick_best_qty(candidates, total_price_value, min_price, max_price):
+        unique = sorted(set(candidates))
+        if not unique:
+            return None
+
+        valid = []
+        for q in unique:
+            unit = total_price_value // q if q > 0 else total_price_value
+            if min_price <= unit <= max_price:
+                valid.append((q, unit))
+
+        if valid:
+            # 정상 단가 범위 중 90,000원에 가장 가까운 수량을 우선
+            valid.sort(key=lambda x: (abs(x[1] - 90000), x[0]))
+            return valid[0][0]
+
+        # 범위를 만족하는 후보가 없으면 기존처럼 첫 후보 대신 최소 수량 사용
+        return unique[0]
+
+    # 3. 센서 수량을 못 찾으면 일반 패턴으로 추출
+    if sensor_qty is None:
+        qty_candidates = _extract_qty_candidates(clean_title)
+        if not qty_candidates:
+            # 사은품 제거 과정에서 메인 수량까지 지워지는 케이스 보정
+            qty_candidates = _extract_qty_candidates(title)
+
+        picked_qty = _pick_best_qty(qty_candidates, total_price, 65000, 180000)
+        if picked_qty is not None:
+            sensor_qty = picked_qty
             qty_from_text = True
         else:
             sensor_qty = 1
