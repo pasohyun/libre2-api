@@ -7,6 +7,8 @@ from api.schemas import ProductListResponse
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import threading
+import os
+import uuid
 import config
 
 router = APIRouter(prefix="/products")
@@ -16,6 +18,21 @@ _crawl_running = False
 _crawl_last_started_at_kst = None
 _crawl_last_finished_at_kst = None
 _crawl_last_error = None
+
+try:
+    from api.services.card_renderer import render_card_png
+    _card_renderer_import_error = None
+except Exception as e:
+    render_card_png = None
+    _card_renderer_import_error = e
+
+try:
+    from api.services.s3_storage import is_s3_enabled, upload_bytes
+    _s3_storage_import_error = None
+except Exception as e:
+    is_s3_enabled = None
+    upload_bytes = None
+    _s3_storage_import_error = e
 
 
 def _to_kst(dt):
@@ -68,6 +85,7 @@ def get_latest_products(db: Session = Depends(get_db)):
                 LIMIT 1
             )
             SELECT 
+                p.id,
                 keyword, product_name, unit_price, quantity, total_price,
                 mall_name, calc_method, link,
                 COALESCE(card_image_path, image_url) AS image_url,
@@ -452,6 +470,7 @@ def get_mall_timeline(
         rows = db.execute(text("""
             SELECT 
                 p.product_name,
+                p.id,
                 p.unit_price,
                 p.quantity,
                 p.total_price,
@@ -467,21 +486,22 @@ def get_mall_timeline(
 
         daily_best = {}
         for row in rows:
-            captured_at_kst = _to_kst(row[7]) if hasattr(row[7], "strftime") else None
-            date_key = captured_at_kst.strftime("%Y-%m-%d") if captured_at_kst else str(row[7])[:10]
-            unit_price = row[1]
+            captured_at_kst = _to_kst(row[8]) if hasattr(row[8], "strftime") else None
+            date_key = captured_at_kst.strftime("%Y-%m-%d") if captured_at_kst else str(row[8])[:10]
+            unit_price = row[2]
 
             if date_key not in daily_best or unit_price < daily_best[date_key]["unitPrice"]:
                 daily_best[date_key] = {
-                    "capturedAt": captured_at_kst.strftime("%Y-%m-%d %H:%M") if captured_at_kst else str(row[7]),
+                    "id": row[1],
+                    "capturedAt": captured_at_kst.strftime("%Y-%m-%d %H:%M") if captured_at_kst else str(row[8]),
                     "date": date_key,
                     "productName": row[0],
-                    "unitPrice": row[1],
-                    "pack": row[2],
-                    "price": row[3],
-                    "url": row[4] or "#",
-                    "captureThumb": row[5] or "",
-                    "calcMethod": row[6],
+                    "unitPrice": row[2],
+                    "pack": row[3],
+                    "price": row[4],
+                    "url": row[5] or "#",
+                    "captureThumb": row[6] or "",
+                    "calcMethod": row[7],
                 }
 
         timeline = [daily_best[k] for k in sorted(daily_best.keys(), reverse=True)]
@@ -525,4 +545,84 @@ def get_crawl_status():
         "last_finished_at": _crawl_last_finished_at_kst,
         "last_error": _crawl_last_error,
         "timezone": "Asia/Seoul",
+    }
+
+
+@router.post("/card/generate")
+def generate_card_image(
+    product_id: int = Query(..., ge=1, description="products.id"),
+    db: Session = Depends(get_db)
+):
+    """
+    단건 카드 이미지 생성/업로드 API
+    - 기본 화면은 HTML 카드로 빠르게 표시
+    - 필요한 경우에만 버튼 클릭으로 이미지 생성
+    """
+    if not config.ENABLE_CARD_RENDER:
+        raise HTTPException(status_code=400, detail="ENABLE_CARD_RENDER is false")
+    if _card_renderer_import_error is not None or render_card_png is None:
+        raise HTTPException(status_code=500, detail=f"Card renderer unavailable: {_card_renderer_import_error}")
+    if _s3_storage_import_error is not None or is_s3_enabled is None or upload_bytes is None:
+        raise HTTPException(status_code=500, detail=f"S3 storage unavailable: {_s3_storage_import_error}")
+    if not is_s3_enabled():
+        raise HTTPException(status_code=400, detail="S3 is not enabled")
+
+    row = db.execute(text("""
+        SELECT id, keyword, product_name, unit_price, quantity, total_price,
+               mall_name, calc_method, link, image_url, card_image_path, snapshot_id
+        FROM products
+        WHERE id = :pid
+        LIMIT 1
+    """), {"pid": product_id}).mappings().first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    if row["card_image_path"]:
+        return {
+            "created": False,
+            "product_id": product_id,
+            "card_image_path": row["card_image_path"],
+            "message": "Card image already exists",
+        }
+
+    product = {
+        "product_name": row["product_name"],
+        "mall_name": row["mall_name"],
+        "link": row["link"],
+        "image_url": row["image_url"],
+        "unit_price": row["unit_price"],
+        "total_price": row["total_price"],
+        "quantity": row["quantity"],
+        "calc_method": row["calc_method"],
+    }
+
+    captured_at = datetime.now(KST)
+    bucket_prefix = config.S3_PREFIX.strip("/")
+    snapshot_part = row["snapshot_id"] or captured_at.strftime("%Y%m%d")
+    object_key = f"{bucket_prefix}/products/manual/{snapshot_part}/{product_id}_{uuid.uuid4().hex[:8]}.png"
+
+    try:
+        local_png_path = render_card_png(
+            product=product,
+            out_dir=os.path.join("product_cards", "manual", snapshot_part),
+            captured_at=captured_at,
+        )
+        with open(local_png_path, "rb") as f:
+            content = f.read()
+        s3_url = upload_bytes(content=content, object_key=object_key, content_type="image/png")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Card generation failed: {e}")
+
+    db.execute(
+        text("UPDATE products SET card_image_path = :url WHERE id = :pid"),
+        {"url": s3_url, "pid": product_id},
+    )
+    db.commit()
+
+    return {
+        "created": True,
+        "product_id": product_id,
+        "card_image_path": s3_url,
+        "message": "Card image generated and saved",
     }
