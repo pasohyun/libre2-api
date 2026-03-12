@@ -375,6 +375,71 @@ def _calc_valid(calc_method: str) -> int:
     return 1
 
 
+def _norm_text(value) -> str:
+    return (value or "").strip()
+
+
+def _row_state_signature(row: dict):
+    return (
+        int(row.get("unit_price") or 0),
+        int(row.get("quantity") or 0),
+        int(row.get("total_price") or 0),
+        _norm_text(row.get("calc_method")),
+        _norm_text(row.get("image_url")),
+        _norm_text(row.get("card_image_path")),
+    )
+
+
+def _db_state_signature(db_row):
+    return (
+        int(db_row[0] or 0),
+        int(db_row[1] or 0),
+        int(db_row[2] or 0),
+        _norm_text(db_row[3]),
+        _norm_text(db_row[4]),
+        _norm_text(db_row[5]),
+    )
+
+
+def _is_same_as_latest_row(cur, row: dict) -> bool:
+    link = _norm_text(row.get("link"))
+    if link:
+        cur.execute(
+            f"""
+            SELECT unit_price, quantity, total_price, calc_method, image_url, card_image_path
+            FROM {config.DB_TABLE}
+            WHERE link = %s
+            ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
+            LIMIT 1
+            """,
+            (link,),
+        )
+    else:
+        cur.execute(
+            f"""
+            SELECT unit_price, quantity, total_price, calc_method, image_url, card_image_path
+            FROM {config.DB_TABLE}
+            WHERE channel = %s
+              AND market = %s
+              AND mall_name = %s
+              AND product_name = %s
+            ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
+            LIMIT 1
+            """,
+            (
+                _norm_text(row.get("channel")) or "naver",
+                _norm_text(row.get("market")) or "스마트스토어",
+                _norm_text(row.get("mall_name")),
+                _norm_text(row.get("product_name")),
+            ),
+        )
+
+    latest = cur.fetchone()
+    if latest is None:
+        return False
+    return _db_state_signature(latest) == _row_state_signature(row)
+
+
 # ✅ (2) save_to_db 시그니처 변경 + INSERT 컬럼 추가
 def save_to_db(rows, *, snapshot_id: str, snapshot_at: datetime):
     import os
@@ -454,8 +519,25 @@ def save_to_db(rows, *, snapshot_id: str, snapshot_at: datetime):
     )
     """
 
-    data = []
+    rows_to_insert = []
+    skipped_identical = 0
     for r in rows:
+        if _is_same_as_latest_row(cur, r):
+            skipped_identical += 1
+            continue
+        rows_to_insert.append(r)
+
+    if skipped_identical:
+        _log(f"Skipped identical rows vs latest DB state: {skipped_identical}")
+
+    if not rows_to_insert:
+        _log("No changed/new rows to insert.")
+        cur.close()
+        conn.close()
+        return 0
+
+    data = []
+    for r in rows_to_insert:
         data.append(
             (
                 r["keyword"],
