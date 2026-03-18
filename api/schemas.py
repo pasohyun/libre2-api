@@ -70,7 +70,6 @@ class BelowThresholdSnapshot(BaseModel):
     product_name: Optional[str] = None
     calc_method: Optional[str] = None
     card_image_path: Optional[str] = None
-    card_html: Optional[str] = None
 
 
 class BelowThresholdItem(BaseModel):
@@ -86,7 +85,6 @@ class BelowThresholdItem(BaseModel):
     product_name: Optional[str] = None
     calc_method: Optional[str] = None
     card_image_path: Optional[str] = None
-    card_html: Optional[str] = None
     snapshots: List[BelowThresholdSnapshot] = []
 
 
