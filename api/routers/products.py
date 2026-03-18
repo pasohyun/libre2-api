@@ -104,7 +104,6 @@ _MALL_NAME_DB_TO_PUBLIC = {
     "글루어트": "글리코핏",
     "무화당": "닥다몰",
 }
-_MALL_NAME_PUBLIC_TO_DB = {v: k for k, v in _MALL_NAME_DB_TO_PUBLIC.items()}
 
 
 def _to_public_mall_name(name: str | None) -> str:
@@ -118,7 +117,9 @@ def _to_db_mall_name(name: str | None) -> str:
     raw = (name or "").strip()
     if not raw:
         return ""
-    return _MALL_NAME_PUBLIC_TO_DB.get(raw, raw)
+    # DB는 표준 이름(글리코핏/닥다몰)으로 저장되므로
+    # 과거 이름이 들어와도 표준 이름으로 조회한다.
+    return _to_public_mall_name(raw)
 
 
 @router.get("/latest", response_model=ProductListResponse)
