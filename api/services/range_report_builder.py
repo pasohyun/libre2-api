@@ -143,9 +143,11 @@ def build_range_report(
         channel=channel,
     )
 
-    # Attach card_html to each below-threshold item
+    # Attach card_html to seller-level min + each snapshot
     for item in below_list:
         item["card_html"] = _build_evidence_card_html(item)
+        for snap in item.get("snapshots") or []:
+            snap["card_html"] = _build_evidence_card_html(snap)
 
     # ── Section 3: Seller chart data ────────────────────────────────
     seller_names = [item["seller_name"] for item in below_list]
