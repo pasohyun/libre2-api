@@ -5,6 +5,7 @@ import json
 import re
 import time
 import uuid
+from html import unescape
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -34,6 +35,10 @@ KST = ZoneInfo("Asia/Seoul")
 NAVER_API_TIMEOUT_SEC = int(os.getenv("NAVER_API_TIMEOUT_SEC", "20"))
 NAVER_API_MAX_RETRIES = int(os.getenv("NAVER_API_MAX_RETRIES", "3"))
 VERBOSE_EXCLUDE_LOG = os.getenv("VERBOSE_EXCLUDE_LOG", "false").lower() == "true"
+COUPANG_SELLER_ENRICH_ENABLED = os.getenv("COUPANG_SELLER_ENRICH_ENABLED", "true").lower() == "true"
+COUPANG_SELLER_TIMEOUT_SEC = int(os.getenv("COUPANG_SELLER_TIMEOUT_SEC", "8"))
+# 쿠팡 상품 페이지 추가 조회는 런타임/트래픽 보호를 위해 상한을 둔다.
+COUPANG_SELLER_MAX_FETCH_PER_RUN = int(os.getenv("COUPANG_SELLER_MAX_FETCH_PER_RUN", "30"))
 
 
 def _log(message: str):
@@ -277,11 +282,86 @@ def analyze_product(title, total_price):
         return sensor_qty, calc_unit_price, "확인필요"
 
 
+def _is_coupang_item(link: str, mall_name: str) -> bool:
+    link_text = (link or "").lower()
+    mall_text = (mall_name or "").strip()
+    return ("coupang.com" in link_text) or (mall_text == "쿠팡")
+
+
+def _decode_json_escaped_text(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    try:
+        return json.loads(f'"{raw}"')
+    except Exception:
+        return raw
+
+
+def _extract_coupang_seller_name_from_html(html_text: str) -> str:
+    if not html_text:
+        return ""
+
+    patterns = [
+        r'"vendorName"\s*:\s*"([^"]+)"',
+        r'"sellerName"\s*:\s*"([^"]+)"',
+        r'"seller"\s*:\s*"([^"]+)"',
+        r'"storeName"\s*:\s*"([^"]+)"',
+    ]
+
+    blocked = {"쿠팡", "coupang", "로켓배송", "rocket"}
+
+    for pattern in patterns:
+        match = re.search(pattern, html_text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        candidate = _decode_json_escaped_text(match.group(1))
+        candidate = unescape(candidate).strip()
+        candidate = re.sub(r"\s+", " ", candidate)
+        if candidate and candidate.lower() not in blocked:
+            return candidate
+    return ""
+
+
+def _fetch_coupang_seller_name(link: str, cache: dict, *, timeout_sec: int) -> str:
+    target = (link or "").strip()
+    if not target:
+        return ""
+
+    cached = cache.get(target)
+    if cached is not None:
+        return cached
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
+
+    try:
+        req = urllib.request.Request(target, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+            html_text = resp.read().decode("utf-8", errors="ignore")
+        seller_name = _extract_coupang_seller_name_from_html(html_text)
+    except Exception as e:
+        _log(f"coupang seller enrich failed: {e}")
+        seller_name = ""
+
+    cache[target] = seller_name
+    return seller_name
+
+
 def get_naver_data_all(query):
     enc = urllib.parse.quote(query)
     all_results = []
     start = 1
     display = 100
+    coupang_seller_cache = {}
+    coupang_seller_fetch_count = 0
+    coupang_seller_hit_count = 0
 
     while True:
         if start > 1000:
@@ -329,6 +409,33 @@ def get_naver_data_all(query):
                 if (mall or "").strip() == "네이버":
                     mall = "최저가비교"
                 link = item.get("link", "")
+                channel = "naver"
+                market = "스마트스토어"
+
+                is_coupang = _is_coupang_item(link, mall)
+                if is_coupang:
+                    channel = "coupang"
+                    market = "마켓플레이스"
+
+                    if (
+                        COUPANG_SELLER_ENRICH_ENABLED
+                        and (mall or "").strip() == "쿠팡"
+                        and (
+                            link in coupang_seller_cache
+                            or coupang_seller_fetch_count < COUPANG_SELLER_MAX_FETCH_PER_RUN
+                        )
+                    ):
+                        is_new_fetch = link not in coupang_seller_cache
+                        seller_name = _fetch_coupang_seller_name(
+                            link,
+                            coupang_seller_cache,
+                            timeout_sec=COUPANG_SELLER_TIMEOUT_SEC,
+                        )
+                        if is_new_fetch:
+                            coupang_seller_fetch_count += 1
+                        if seller_name:
+                            mall = seller_name
+                            coupang_seller_hit_count += 1
 
                 category1 = item.get("category1", "")
                 category2 = item.get("category2", "")
@@ -377,8 +484,8 @@ def get_naver_data_all(query):
                     "link": link,
                     "image_url": image_url,
                     "card_image_path": None,
-                    "channel": "naver",
-                    "market": "스마트스토어",
+                    "channel": channel,
+                    "market": market,
                 })
 
             kept_now = len(all_results)
@@ -396,6 +503,13 @@ def get_naver_data_all(query):
         except Exception as e:
             _log(f"API error: {e}")
             break
+
+    if COUPANG_SELLER_ENRICH_ENABLED:
+        _log(
+            "coupang seller enrich summary: "
+            f"fetched={coupang_seller_fetch_count}, resolved={coupang_seller_hit_count}, "
+            f"cache_size={len(coupang_seller_cache)}"
+        )
 
     return all_results
 
