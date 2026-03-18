@@ -277,6 +277,10 @@ def _extract_coupang_seller_name_from_html(html_text: str) -> str:
         r'"sellerName"\s*:\s*"([^"]+)"',
         r'"seller"\s*:\s*"([^"]+)"',
         r'"storeName"\s*:\s*"([^"]+)"',
+        # JSON-LD 형태: "seller":{"@type":"Organization","name":"..."}
+        r'"seller"\s*:\s*\{[^{}]{0,300}?"name"\s*:\s*"([^"]+)"',
+        # HTML 텍스트 형태: 판매자 : (주)xxxx
+        r"판매자\s*[:：]\s*([^<\n\r]+)",
     ]
 
     blocked = {"쿠팡", "coupang", "로켓배송", "rocket"}
@@ -309,6 +313,8 @@ def _fetch_coupang_seller_name(link: str, cache: dict, *, timeout_sec: int) -> s
             "Chrome/124.0.0.0 Safari/537.36"
         ),
         "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Referer": "https://www.coupang.com/",
     }
 
     try:
@@ -322,6 +328,13 @@ def _fetch_coupang_seller_name(link: str, cache: dict, *, timeout_sec: int) -> s
 
     cache[target] = seller_name
     return seller_name
+
+
+def _can_fetch_coupang_seller(fetch_count: int) -> bool:
+    # <= 0 은 제한 없음으로 본다.
+    if COUPANG_SELLER_MAX_FETCH_PER_RUN <= 0:
+        return True
+    return fetch_count < COUPANG_SELLER_MAX_FETCH_PER_RUN
 
 
 def get_naver_data_all(query):
@@ -392,7 +405,7 @@ def get_naver_data_all(query):
                         and (mall or "").strip() == "쿠팡"
                         and (
                             link in coupang_seller_cache
-                            or coupang_seller_fetch_count < COUPANG_SELLER_MAX_FETCH_PER_RUN
+                            or _can_fetch_coupang_seller(coupang_seller_fetch_count)
                         )
                     ):
                         is_new_fetch = link not in coupang_seller_cache
