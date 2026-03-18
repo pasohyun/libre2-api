@@ -42,7 +42,7 @@ COUPANG_SELLER_TIMEOUT_SEC = int(os.getenv("COUPANG_SELLER_TIMEOUT_SEC", "8"))
 COUPANG_SELLER_MAX_FETCH_PER_RUN = int(os.getenv("COUPANG_SELLER_MAX_FETCH_PER_RUN", "30"))
 
 MALL_NAME_NORMALIZE_MAP = {
-    "글루어트": "글리코핏",
+    "글루어트": "글루코핏",
     "무화당": "닥다몰",
 }
 

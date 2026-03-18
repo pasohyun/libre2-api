@@ -101,7 +101,7 @@ def _to_display_image_url(value: str | None) -> str | None:
 
 
 _MALL_NAME_DB_TO_PUBLIC = {
-    "글루어트": "글리코핏",
+    "글루어트": "글루코핏",
     "무화당": "닥다몰",
 }
 
@@ -117,7 +117,7 @@ def _to_db_mall_name(name: str | None) -> str:
     raw = (name or "").strip()
     if not raw:
         return ""
-    # DB는 표준 이름(글리코핏/닥다몰)으로 저장되므로
+    # DB는 표준 이름(글루코핏/닥다몰)으로 저장되므로
     # 과거 이름이 들어와도 표준 이름으로 조회한다.
     return _to_public_mall_name(raw)
 
