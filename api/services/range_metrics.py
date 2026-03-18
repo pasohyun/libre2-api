@@ -193,7 +193,7 @@ def compute_below_threshold_detail(
     return result
 
 
-# ── 3) Seller daily chart data ──────────────────────────────────────
+# ── 3) Seller chart data (per-snapshot) ─────────────────────────────
 def compute_seller_chart_data(
     db: Session,
     *,
@@ -202,12 +202,17 @@ def compute_seller_chart_data(
     seller_names: Optional[List[str]] = None,
     channel: str = "naver",
 ) -> Dict[str, List[Dict[str, Any]]]:
-    """Return {seller_name: [{date, min_price}, ...]} for daily chart."""
+    """Return {seller_name: [{date, time, min_price}, ...]} per crawl snapshot.
+
+    Each crawl session (00, 03, 12, 18 etc.) produces one point per seller.
+    x-axis: date (YYYY-MM-DD), but multiple points per day.
+    """
     start, end = _date_range(start_date, end_date)
     rows = _fetch_products(db, start, end, channel)
 
-    # bucket by seller -> date -> min price
-    by_seller_date: Dict[str, Dict[str, int]] = defaultdict(dict)
+    # bucket by seller -> (date, hour_bucket) -> min price
+    # hour_bucket groups nearby timestamps into crawl sessions
+    by_seller_slot: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
 
     for r in rows:
         if int(r.get("calc_valid") or 1) != 1:
@@ -217,18 +222,34 @@ def compute_seller_chart_data(
             continue
         price = int(r["unit_price"])
         ts = r["ts"]
-        date_str = ts.strftime("%Y-%m-%d") if isinstance(ts, datetime) else str(ts)[:10]
+        if isinstance(ts, datetime):
+            date_str = ts.strftime("%Y-%m-%d")
+            time_str = ts.strftime("%H:%M")
+        else:
+            date_str = str(ts)[:10]
+            time_str = str(ts)[11:16]
 
-        cur = by_seller_date[seller].get(date_str)
-        if cur is None or price < cur:
-            by_seller_date[seller][date_str] = price
+        # Use snapshot_id if available, otherwise bucket by hour
+        snap = r.get("snapshot_id")
+        if snap:
+            slot_key = f"{date_str}_{snap}"
+        else:
+            slot_key = f"{date_str}_{time_str[:2]}"
+
+        cur = by_seller_slot[seller].get(slot_key)
+        if cur is None or price < cur["min_price"]:
+            by_seller_slot[seller][slot_key] = {
+                "date": date_str,
+                "time": time_str,
+                "min_price": price,
+            }
 
     result: Dict[str, List[Dict[str, Any]]] = {}
-    for seller, date_map in by_seller_date.items():
-        points = [
-            {"date": d, "min_price": p}
-            for d, p in sorted(date_map.items())
-        ]
+    for seller, slot_map in by_seller_slot.items():
+        points = sorted(
+            slot_map.values(),
+            key=lambda x: (x["date"], x["time"]),
+        )
         result[seller] = points
 
     return result
