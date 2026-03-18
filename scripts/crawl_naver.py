@@ -1,6 +1,7 @@
 import os
 import urllib.request
 import urllib.parse
+import urllib.error
 import json
 import re
 import time
@@ -322,8 +323,16 @@ def _fetch_coupang_seller_name(link: str, cache: dict, *, timeout_sec: int) -> s
         with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
             html_text = resp.read().decode("utf-8", errors="ignore")
         seller_name = _extract_coupang_seller_name_from_html(html_text)
+        if not seller_name:
+            _log(f"coupang seller enrich miss: no pattern matched ({target[:120]})")
+    except urllib.error.HTTPError as e:
+        _log(f"coupang seller enrich failed: HTTP {e.code} ({target[:120]})")
+        seller_name = ""
+    except urllib.error.URLError as e:
+        _log(f"coupang seller enrich failed: URL error {e.reason} ({target[:120]})")
+        seller_name = ""
     except Exception as e:
-        _log(f"coupang seller enrich failed: {e}")
+        _log(f"coupang seller enrich failed: {e} ({target[:120]})")
         seller_name = ""
 
     cache[target] = seller_name
@@ -345,6 +354,7 @@ def get_naver_data_all(query):
     coupang_seller_cache = {}
     coupang_seller_fetch_count = 0
     coupang_seller_hit_count = 0
+    coupang_seller_limit_skipped = 0
 
     while True:
         if start > 1000:
@@ -400,14 +410,15 @@ def get_naver_data_all(query):
                     channel = "coupang"
                     market = "마켓플레이스"
 
-                    if (
+                    can_try_enrich = (
                         COUPANG_SELLER_ENRICH_ENABLED
                         and (mall or "").strip() == "쿠팡"
                         and (
                             link in coupang_seller_cache
                             or _can_fetch_coupang_seller(coupang_seller_fetch_count)
                         )
-                    ):
+                    )
+                    if can_try_enrich:
                         is_new_fetch = link not in coupang_seller_cache
                         seller_name = _fetch_coupang_seller_name(
                             link,
@@ -419,6 +430,12 @@ def get_naver_data_all(query):
                         if seller_name:
                             mall = seller_name
                             coupang_seller_hit_count += 1
+                    elif (
+                        COUPANG_SELLER_ENRICH_ENABLED
+                        and (mall or "").strip() == "쿠팡"
+                        and link not in coupang_seller_cache
+                    ):
+                        coupang_seller_limit_skipped += 1
 
                 category1 = item.get("category1", "")
                 category2 = item.get("category2", "")
@@ -491,6 +508,8 @@ def get_naver_data_all(query):
         _log(
             "coupang seller enrich summary: "
             f"fetched={coupang_seller_fetch_count}, resolved={coupang_seller_hit_count}, "
+            f"unresolved={max(coupang_seller_fetch_count - coupang_seller_hit_count, 0)}, "
+            f"limit_skipped={coupang_seller_limit_skipped}, "
             f"cache_size={len(coupang_seller_cache)}"
         )
 
