@@ -46,36 +46,6 @@ def _log(message: str):
     print(message, flush=True)
 
 
-def _dedupe_rows(rows):
-    """
-    동일 실행(run) 내 중복 상품 제거.
-    링크가 있으면 링크 기준, 없으면 핵심 필드 조합 기준으로 dedupe.
-    """
-    if not rows:
-        return []
-
-    seen = set()
-    deduped = []
-    for r in rows:
-        link = (r.get("link") or "").strip()
-        if link:
-            key = ("link", link)
-        else:
-            key = (
-                "fallback",
-                (r.get("mall_name") or "").strip(),
-                (r.get("product_name") or "").strip(),
-                int(r.get("unit_price") or 0),
-                int(r.get("quantity") or 0),
-                int(r.get("total_price") or 0),
-            )
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(r)
-    return deduped
-
-
 def _upload_product_images_to_s3(rows, *, snapshot_id: str):
     """
     최신 스냅샷 중 일부 상품 이미지를 S3에 업로드하고 card_image_path에 URL 저장.
@@ -526,65 +496,6 @@ def _norm_text(value) -> str:
     return (value or "").strip()
 
 
-def _row_state_signature(row: dict):
-    return (
-        int(row.get("unit_price") or 0),
-        int(row.get("quantity") or 0),
-        int(row.get("total_price") or 0),
-        _norm_text(row.get("calc_method")),
-        _norm_text(row.get("image_url")),
-    )
-
-
-def _db_state_signature(db_row):
-    return (
-        int(db_row[0] or 0),
-        int(db_row[1] or 0),
-        int(db_row[2] or 0),
-        _norm_text(db_row[3]),
-        _norm_text(db_row[4]),
-    )
-
-
-def _is_same_as_latest_row(cur, row: dict) -> bool:
-    link = _norm_text(row.get("link"))
-    if link:
-        cur.execute(
-            f"""
-            SELECT unit_price, quantity, total_price, calc_method, image_url, card_image_path
-            FROM {config.DB_TABLE}
-            WHERE link = %s
-            ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
-            LIMIT 1
-            """,
-            (link,),
-        )
-    else:
-        cur.execute(
-            f"""
-            SELECT unit_price, quantity, total_price, calc_method, image_url, card_image_path
-            FROM {config.DB_TABLE}
-            WHERE channel = %s
-              AND market = %s
-              AND mall_name = %s
-              AND product_name = %s
-            ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
-            LIMIT 1
-            """,
-            (
-                _norm_text(row.get("channel")) or "naver",
-                _norm_text(row.get("market")) or "스마트스토어",
-                _norm_text(row.get("mall_name")),
-                _norm_text(row.get("product_name")),
-            ),
-        )
-
-    latest = cur.fetchone()
-    if latest is None:
-        return False
-    return _db_state_signature(latest) == _row_state_signature(row)
-
-
 # ✅ (2) save_to_db 시그니처 변경 + INSERT 컬럼 추가
 def save_to_db(rows, *, snapshot_id: str, snapshot_at: datetime):
     import os
@@ -664,25 +575,14 @@ def save_to_db(rows, *, snapshot_id: str, snapshot_at: datetime):
     )
     """
 
-    rows_to_insert = []
-    skipped_identical = 0
-    for r in rows:
-        if _is_same_as_latest_row(cur, r):
-            skipped_identical += 1
-            continue
-        rows_to_insert.append(r)
-
-    if skipped_identical:
-        _log(f"Skipped identical rows vs latest DB state: {skipped_identical}")
-
-    if not rows_to_insert:
-        _log("No changed/new rows to insert.")
+    if not rows:
+        _log("No rows to insert.")
         cur.close()
         conn.close()
         return 0
 
     data = []
-    for r in rows_to_insert:
+    for r in rows:
         data.append(
             (
                 r["keyword"],
@@ -815,17 +715,16 @@ def update_card_image_paths(rows, *, snapshot_id: str):
 
 
 def run_crawling():
-    _log(f"START: {datetime.now(KST).isoformat(timespec='seconds')}")
+    crawl_started_at = datetime.now(KST).replace(microsecond=0)
+    _log(f"START: {crawl_started_at.isoformat(timespec='seconds')}")
     keyword = config.SEARCH_KEYWORD
 
     rows = get_naver_data_all(keyword)
-    fetched_count = len(rows)
-    rows = _dedupe_rows(rows)
-    _log(f"Fetched: {fetched_count} rows")
-    _log(f"Deduped: {len(rows)} rows (removed {fetched_count - len(rows)})")
+    _log(f"Fetched: {len(rows)} rows")
 
     # 실행 단위 snapshot_id/snapshot_at (초 단위 + UUID)로 고정해 run 간 혼합 방지
-    snapshot_at = datetime.now(KST).replace(microsecond=0)
+    # snapshot_at은 "크롤링 시작 시각"으로 기록해 대시보드 표기 시 실행 시각과 맞춘다.
+    snapshot_at = crawl_started_at
     snapshot_id = f"{snapshot_at.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
 
     inserted = save_to_db(rows, snapshot_id=snapshot_id, snapshot_at=snapshot_at)
