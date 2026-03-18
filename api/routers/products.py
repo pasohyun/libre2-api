@@ -100,6 +100,28 @@ def _to_display_image_url(value: str | None) -> str | None:
     return raw
 
 
+_MALL_NAME_DB_TO_PUBLIC = {
+    "글루어트": "글루코핏",
+    "무화당": "닥다몰",
+}
+
+
+def _to_public_mall_name(name: str | None) -> str:
+    raw = (name or "").strip()
+    if not raw:
+        return ""
+    return _MALL_NAME_DB_TO_PUBLIC.get(raw, raw)
+
+
+def _to_db_mall_name(name: str | None) -> str:
+    raw = (name or "").strip()
+    if not raw:
+        return ""
+    # DB는 표준 이름(글루코핏/닥다몰)으로 저장되므로
+    # 과거 이름이 들어와도 표준 이름으로 조회한다.
+    return _to_public_mall_name(raw)
+
+
 @router.get("/latest", response_model=ProductListResponse)
 def get_latest_products(db: Session = Depends(get_db)):
     """
@@ -139,6 +161,7 @@ def get_latest_products(db: Session = Depends(get_db)):
             item["card_image_path"] = signed_card
             # HTML 카드 미리보기는 원본 사이트 이미지를 유지한다.
             item["image_url"] = item.get("image_url") or ""
+            item["mall_name"] = _to_public_mall_name(item.get("mall_name"))
             data.append(item)
 
         snapshot_time = _to_kst(rows[0]["snapshot_time"]) if rows else None
@@ -190,6 +213,7 @@ def get_today_products(db: Session = Depends(get_db)):
             signed_card = _to_display_image_url(item.get("card_image_path"))
             item["card_image_path"] = signed_card
             item["image_url"] = item.get("image_url") or ""
+            item["mall_name"] = _to_public_mall_name(item.get("mall_name"))
             data.append(item)
 
         snapshot_time = _to_kst(rows[0]["snapshot_time"]) if rows else None
@@ -218,9 +242,15 @@ def get_lowest_products(
             LIMIT :limit
         """), {"limit": limit}).mappings().all()
 
+        data = []
+        for r in rows:
+            item = dict(r)
+            item["mall_name"] = _to_public_mall_name(item.get("mall_name"))
+            data.append(item)
+
         return {
             "limit": limit,
-            "data": rows
+            "data": data
         }
     except Exception as e:
         import traceback
@@ -250,10 +280,16 @@ def get_mall_statistics(db: Session = Depends(get_db)):
             LIMIT 50
         """)).mappings().all()
 
+        data = []
+        for r in rows:
+            item = dict(r)
+            item["mall_name"] = _to_public_mall_name(item.get("mall_name"))
+            data.append(item)
+
         return {
             "description": "판매처별 전체 기간 통계 (상품 수 기준 정렬)",
-            "count": len(rows),
-            "data": rows
+            "count": len(data),
+            "data": data
         }
     except Exception as e:
         import traceback
@@ -295,10 +331,16 @@ def get_top_malls(
             LIMIT :limit
         """), {"limit": limit}).mappings().all()
 
+        data = []
+        for r in rows:
+            item = dict(r)
+            item["mall_name"] = _to_public_mall_name(item.get("mall_name"))
+            data.append(item)
+
         return {
             "description": "최근 크롤링 기준 판매처별 최저가 (낮은 순)",
-            "count": len(rows),
-            "data": rows
+            "count": len(data),
+            "data": data
         }
     except Exception as e:
         import traceback
@@ -317,7 +359,7 @@ def get_config():
     """
     return {
         "target_price": config.TARGET_PRICE,
-        "tracked_malls": config.TRACKED_MALLS,
+        "tracked_malls": [_to_public_mall_name(m) for m in config.TRACKED_MALLS],
         "search_keyword": config.SEARCH_KEYWORD
     }
 
@@ -359,11 +401,17 @@ def get_products_below_target(
 
         snapshot_time = _to_kst(rows[0]["snapshot_time"]) if rows else None
 
+        data = []
+        for r in rows:
+            item = dict(r)
+            item["mall_name"] = _to_public_mall_name(item.get("mall_name"))
+            data.append(item)
+
         return {
             "target_price": price,
             "snapshot_time": snapshot_time,
-            "count": len(rows),
-            "data": rows
+            "count": len(data),
+            "data": data
         }
     except Exception as e:
         import traceback
@@ -381,9 +429,9 @@ def get_tracked_malls_summary(
     - 현재 단가, 최근 7일 변동폭, 기준가 이하 횟수
     """
     if malls:
-        mall_list = [m.strip() for m in malls.split(",") if m.strip()]
+        mall_list = [_to_db_mall_name(m.strip()) for m in malls.split(",") if m.strip()]
     elif config.TRACKED_MALLS:
-        mall_list = config.TRACKED_MALLS
+        mall_list = [_to_db_mall_name(m) for m in config.TRACKED_MALLS]
     else:
         top_malls = db.execute(text("""
             WITH latest AS (
@@ -456,7 +504,7 @@ def get_tracked_malls_summary(
             """), {"mall_name": mall_name, "target_price": config.TARGET_PRICE}).fetchone()
 
             results.append({
-                "mall_name": mall_name,
+                "mall_name": _to_public_mall_name(mall_name),
                 "current_price": current_price,
                 "min_price_7d": min_7d,
                 "max_price_7d": max_7d,
@@ -464,9 +512,17 @@ def get_tracked_malls_summary(
                 "below_target_count": below_count[0] if below_count else 0
             })
 
+        public_malls = []
+        seen_public = set()
+        for m in mall_list:
+            pm = _to_public_mall_name(m)
+            if pm and pm not in seen_public:
+                seen_public.add(pm)
+                public_malls.append(pm)
+
         return {
             "target_price": config.TARGET_PRICE,
-            "tracked_malls": mall_list,
+            "tracked_malls": public_malls,
             "data": results
         }
     except Exception as e:
@@ -486,9 +542,9 @@ def get_tracked_malls_trends(
     - 각 판매처의 일별 최저가
     """
     if malls:
-        mall_list = [m.strip() for m in malls.split(",") if m.strip()]
+        mall_list = [_to_db_mall_name(m.strip()) for m in malls.split(",") if m.strip()]
     elif config.TRACKED_MALLS:
-        mall_list = config.TRACKED_MALLS
+        mall_list = [_to_db_mall_name(m) for m in config.TRACKED_MALLS]
     else:
         top_malls = db.execute(text("""
             WITH latest AS (
@@ -531,13 +587,25 @@ def get_tracked_malls_trends(
             date_str = row[0].strftime("%m/%d") if hasattr(row[0], 'strftime') else str(row[0])
             if date_str not in date_data:
                 date_data[date_str] = {"date": date_str}
-            date_data[date_str][row[1]] = row[2]
+            public_mall_name = _to_public_mall_name(row[1])
+            if public_mall_name in date_data[date_str]:
+                # 이름 통합 과정에서 동일 키가 겹치면 더 낮은 가격을 사용
+                date_data[date_str][public_mall_name] = min(date_data[date_str][public_mall_name], row[2])
+            else:
+                date_data[date_str][public_mall_name] = row[2]
 
         trend_data = list(date_data.values())
+        public_malls = []
+        seen_public = set()
+        for m in mall_list:
+            pm = _to_public_mall_name(m)
+            if pm and pm not in seen_public:
+                seen_public.add(pm)
+                public_malls.append(pm)
 
         return {
             "days": days,
-            "malls": mall_list,
+            "malls": public_malls,
             "data": trend_data
         }
     except Exception as e:
@@ -557,6 +625,7 @@ def get_mall_timeline(
     - 스냅샷(또는 시간대)별 최저가 상품 정보
     """
     try:
+        db_mall_name = _to_db_mall_name(mall_name)
         rows = db.execute(text("""
             SELECT
                 p.product_name,
@@ -574,7 +643,7 @@ def get_mall_timeline(
             WHERE p.mall_name = :mall_name
               AND COALESCE(p.snapshot_at, p.created_at) >= DATE_SUB(NOW(), INTERVAL :days DAY)
             ORDER BY COALESCE(p.snapshot_at, p.created_at) DESC
-        """), {"mall_name": mall_name, "days": days}).fetchall()
+        """), {"mall_name": db_mall_name, "days": days}).fetchall()
 
         # snapshot_id 또는 시간대(hour)별로 그룹핑하여 최저가 1건
         slot_best = {}
@@ -611,7 +680,7 @@ def get_mall_timeline(
         timeline = sorted(slot_best.values(), key=lambda x: x["capturedAt"], reverse=True)
 
         return {
-            "mall_name": mall_name,
+            "mall_name": _to_public_mall_name(db_mall_name),
             "days": days,
             "count": len(timeline),
             "data": timeline

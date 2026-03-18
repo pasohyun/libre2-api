@@ -65,6 +65,32 @@ def _safe_alter(conn, ddl_sql: str):
         raise
 
 
+def _normalize_mall_names(conn):
+    """
+    과거 판매처명을 표준명으로 치환한다.
+    - products.mall_name
+    - monthly_seller_metrics.seller_name_std
+    """
+    mappings = [
+        ("글루어트", "글루코핏"),
+        ("무화당", "닥다몰"),
+    ]
+
+    for old_name, new_name in mappings:
+        conn.execute(
+            text("UPDATE products SET mall_name = :new_name WHERE mall_name = :old_name"),
+            {"new_name": new_name, "old_name": old_name},
+        )
+        conn.execute(
+            text(
+                "UPDATE monthly_seller_metrics "
+                "SET seller_name_std = :new_name "
+                "WHERE seller_name_std = :old_name"
+            ),
+            {"new_name": new_name, "old_name": old_name},
+        )
+
+
 def init_db():
     """데이터베이스 테이블/컬럼이 없으면 자동으로 생성/추가"""
 
@@ -163,6 +189,7 @@ def init_db():
             _safe_alter(conn, "CREATE INDEX idx_snapshot_at ON products(snapshot_at)")
             _safe_alter(conn, "CREATE INDEX idx_snapshot_id ON products(snapshot_id)")
 
+            _normalize_mall_names(conn)
             conn.commit()
 
         print("✅ Database initialized successfully (products + monthly report tables)")
