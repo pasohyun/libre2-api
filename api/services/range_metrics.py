@@ -34,6 +34,7 @@ def _fetch_products(
             text(
                 """
                 SELECT
+                    product_name,
                     mall_name,
                     unit_price,
                     total_price,
@@ -173,6 +174,9 @@ def compute_below_threshold_detail(
                 "quantity": int(r.get("quantity") or 0),
                 "time": r["ts"],
                 "link": r.get("link"),
+                "image_url": r.get("image_url"),
+                "product_name": r.get("product_name"),
+                "calc_method": r.get("calc_method"),
                 "card_image_path": r.get("card_image_path"),
             }
 

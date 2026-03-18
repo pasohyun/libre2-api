@@ -65,7 +65,11 @@ class BelowThresholdItem(BaseModel):
     quantity: int
     time: Optional[datetime] = None
     link: Optional[str] = None
+    image_url: Optional[str] = None
+    product_name: Optional[str] = None
+    calc_method: Optional[str] = None
     card_image_path: Optional[str] = None
+    card_html: Optional[str] = None
 
 
 class ChartPoint(BaseModel):
