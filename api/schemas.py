@@ -94,6 +94,7 @@ class ChartPoint(BaseModel):
     date: str
     time: str = ""
     min_price: int
+    other_prices: List[int] = []
 
 
 class SellerDetailCard(BaseModel):
