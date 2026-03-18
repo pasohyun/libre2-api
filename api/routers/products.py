@@ -104,6 +104,7 @@ _MALL_NAME_DB_TO_PUBLIC = {
     "글루어트": "글루코핏",
     "무화당": "닥다몰",
 }
+_MALL_NAME_PUBLIC_TO_LEGACY = {v: k for k, v in _MALL_NAME_DB_TO_PUBLIC.items()}
 
 
 def _to_public_mall_name(name: str | None) -> str:
@@ -120,6 +121,39 @@ def _to_db_mall_name(name: str | None) -> str:
     # DB는 표준 이름(글루코핏/닥다몰)으로 저장되므로
     # 과거 이름이 들어와도 표준 이름으로 조회한다.
     return _to_public_mall_name(raw)
+
+
+def _mall_name_candidates(name: str | None) -> tuple[str, ...]:
+    """
+    DB에 구명칭/신명칭이 혼재해도 조회되도록 후보 목록을 만든다.
+    예) 글루코핏 -> (글루코핏, 글루어트)
+    """
+    public_name = _to_public_mall_name(name)
+    legacy_name = _MALL_NAME_PUBLIC_TO_LEGACY.get(public_name)
+    values = [public_name]
+    if legacy_name:
+        values.append(legacy_name)
+    # 빈 문자열 제거 + 순서 유지 dedupe
+    result = []
+    seen = set()
+    for v in values:
+        if not v or v in seen:
+            continue
+        seen.add(v)
+        result.append(v)
+    return tuple(result)
+
+
+def _mall_name_std_sql(column_name: str) -> str:
+    """
+    SQL에서 판매처명을 표준명으로 통합하기 위한 CASE 식.
+    """
+    return (
+        f"CASE TRIM({column_name}) "
+        "WHEN '글루어트' THEN '글루코핏' "
+        "WHEN '무화당' THEN '닥다몰' "
+        f"ELSE TRIM({column_name}) END"
+    )
 
 
 @router.get("/latest", response_model=ProductListResponse)
@@ -459,6 +493,7 @@ def get_tracked_malls_summary(
     try:
         results = []
         for mall_name in mall_list:
+            mall_name_list = _mall_name_candidates(mall_name)
             current = db.execute(text("""
                 WITH latest AS (
                     SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
@@ -469,12 +504,12 @@ def get_tracked_malls_summary(
                 SELECT MIN(unit_price) as current_price
                 FROM products p
                 CROSS JOIN latest l
-                WHERE p.mall_name = :mall_name
+                WHERE p.mall_name IN :mall_name_list
                   AND (
                       (l.snapshot_id IS NOT NULL AND p.snapshot_id = l.snapshot_id)
                       OR (l.snapshot_id IS NULL AND COALESCE(p.snapshot_at, p.created_at) = l.snapshot_time)
                   )
-            """), {"mall_name": mall_name}).fetchone()
+            """), {"mall_name_list": mall_name_list}).fetchone()
 
             current_price = current[0] if current and current[0] else None
 
@@ -485,11 +520,11 @@ def get_tracked_malls_summary(
                 FROM (
                     SELECT MIN(unit_price) as unit_price, DATE(created_at) as date
                     FROM products
-                    WHERE mall_name = :mall_name
+                    WHERE mall_name IN :mall_name_list
                       AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
                     GROUP BY DATE(created_at)
                 ) daily_prices
-            """), {"mall_name": mall_name}).fetchone()
+            """), {"mall_name_list": mall_name_list}).fetchone()
 
             min_7d = week_stats[0] if week_stats and week_stats[0] else current_price
             max_7d = week_stats[1] if week_stats and week_stats[1] else current_price
@@ -498,10 +533,10 @@ def get_tracked_malls_summary(
             below_count = db.execute(text("""
                 SELECT COUNT(DISTINCT DATE(created_at)) as count
                 FROM products
-                WHERE mall_name = :mall_name
+                WHERE mall_name IN :mall_name_list
                   AND unit_price <= :target_price
                   AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-            """), {"mall_name": mall_name, "target_price": config.TARGET_PRICE}).fetchone()
+            """), {"mall_name_list": mall_name_list, "target_price": config.TARGET_PRICE}).fetchone()
 
             results.append({
                 "mall_name": _to_public_mall_name(mall_name),
@@ -570,15 +605,17 @@ def get_tracked_malls_trends(
         return {"days": days, "malls": [], "data": []}
 
     try:
-        rows = db.execute(text("""
+        mall_name_std_expr = _mall_name_std_sql("mall_name")
+
+        rows = db.execute(text(f"""
             SELECT
                 DATE(created_at) as date,
-                mall_name,
+                {mall_name_std_expr} as mall_name,
                 MIN(unit_price) as price
             FROM products
-            WHERE mall_name IN :mall_list
+            WHERE {mall_name_std_expr} IN :mall_list
               AND created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)
-            GROUP BY DATE(created_at), mall_name
+            GROUP BY DATE(created_at), {mall_name_std_expr}
             ORDER BY date ASC
         """), {"mall_list": tuple(mall_list), "days": days}).fetchall()
 
@@ -587,12 +624,12 @@ def get_tracked_malls_trends(
             date_str = row[0].strftime("%m/%d") if hasattr(row[0], 'strftime') else str(row[0])
             if date_str not in date_data:
                 date_data[date_str] = {"date": date_str}
-            public_mall_name = _to_public_mall_name(row[1])
-            if public_mall_name in date_data[date_str]:
+            mall_name = row[1]
+            if mall_name in date_data[date_str]:
                 # 이름 통합 과정에서 동일 키가 겹치면 더 낮은 가격을 사용
-                date_data[date_str][public_mall_name] = min(date_data[date_str][public_mall_name], row[2])
+                date_data[date_str][mall_name] = min(date_data[date_str][mall_name], row[2])
             else:
-                date_data[date_str][public_mall_name] = row[2]
+                date_data[date_str][mall_name] = row[2]
 
         trend_data = list(date_data.values())
         public_malls = []
@@ -625,7 +662,7 @@ def get_mall_timeline(
     - 스냅샷(또는 시간대)별 최저가 상품 정보
     """
     try:
-        db_mall_name = _to_db_mall_name(mall_name)
+        db_mall_name_list = _mall_name_candidates(mall_name)
         rows = db.execute(text("""
             SELECT
                 p.product_name,
@@ -640,10 +677,10 @@ def get_mall_timeline(
                 COALESCE(p.snapshot_at, p.created_at) AS ts,
                 p.snapshot_id
             FROM products p
-            WHERE p.mall_name = :mall_name
+            WHERE p.mall_name IN :mall_name_list
               AND COALESCE(p.snapshot_at, p.created_at) >= DATE_SUB(NOW(), INTERVAL :days DAY)
             ORDER BY COALESCE(p.snapshot_at, p.created_at) DESC
-        """), {"mall_name": db_mall_name, "days": days}).fetchall()
+        """), {"mall_name_list": db_mall_name_list, "days": days}).fetchall()
 
         # snapshot_id 또는 시간대(hour)별로 그룹핑하여 최저가 1건
         slot_best = {}
@@ -680,7 +717,7 @@ def get_mall_timeline(
         timeline = sorted(slot_best.values(), key=lambda x: x["capturedAt"], reverse=True)
 
         return {
-            "mall_name": _to_public_mall_name(db_mall_name),
+            "mall_name": _to_public_mall_name(mall_name),
             "days": days,
             "count": len(timeline),
             "data": timeline
