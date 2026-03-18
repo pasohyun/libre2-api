@@ -41,10 +41,22 @@ COUPANG_SELLER_TIMEOUT_SEC = int(os.getenv("COUPANG_SELLER_TIMEOUT_SEC", "8"))
 # 쿠팡 상품 페이지 추가 조회는 런타임/트래픽 보호를 위해 상한을 둔다.
 COUPANG_SELLER_MAX_FETCH_PER_RUN = int(os.getenv("COUPANG_SELLER_MAX_FETCH_PER_RUN", "30"))
 
+MALL_NAME_NORMALIZE_MAP = {
+    "글루어트": "글리코핏",
+    "무화당": "닥다몰",
+}
+
 
 def _log(message: str):
     # Cron 환경에서 출력 버퍼링으로 로그가 늦게 보이는 문제를 줄인다.
     print(message, flush=True)
+
+
+def _normalize_mall_name(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return raw
+    return MALL_NAME_NORMALIZE_MAP.get(raw, raw)
 
 
 def _upload_product_images_to_s3(rows, *, snapshot_id: str):
@@ -401,6 +413,7 @@ def get_naver_data_all(query):
                 mall = item.get("mallName", "")
                 if (mall or "").strip() == "네이버":
                     mall = "최저가비교"
+                mall = _normalize_mall_name(mall)
                 link = item.get("link", "")
                 channel = "naver"
                 market = "스마트스토어"
@@ -428,7 +441,7 @@ def get_naver_data_all(query):
                         if is_new_fetch:
                             coupang_seller_fetch_count += 1
                         if seller_name:
-                            mall = seller_name
+                            mall = _normalize_mall_name(seller_name)
                             coupang_seller_hit_count += 1
                     elif (
                         COUPANG_SELLER_ENRICH_ENABLED
@@ -622,7 +635,7 @@ def save_to_db(rows, *, snapshot_id: str, snapshot_at: datetime):
                 r["unit_price"],
                 r["quantity"],
                 r["total_price"],
-                r["mall_name"],
+                _normalize_mall_name(r["mall_name"]),
                 r["calc_method"],
                 r["link"],
                 r["image_url"],
@@ -636,8 +649,19 @@ def save_to_db(rows, *, snapshot_id: str, snapshot_at: datetime):
         )
 
     cur.executemany(sql, data)
-    conn.commit()
     inserted = cur.rowcount
+
+    # 과거 데이터도 표준 판매처명으로 일괄 치환한다.
+    updated_total = 0
+    for old_name, new_name in MALL_NAME_NORMALIZE_MAP.items():
+        cur.execute(
+            f"UPDATE {config.DB_TABLE} SET mall_name = %s WHERE mall_name = %s",
+            (new_name, old_name),
+        )
+        updated_total += cur.rowcount
+    conn.commit()
+    if updated_total > 0:
+        _log(f"Mall names normalized in DB: {updated_total}")
 
     cur.close()
     conn.close()
