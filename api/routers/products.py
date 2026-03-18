@@ -482,8 +482,8 @@ def get_tracked_malls_trends(
     db: Session = Depends(get_db)
 ):
     """
-    주요 판매처 크롤링 시점별 최저가 추이 (그래프용)
-    - 각 판매처의 스냅샷별 최저가
+    주요 판매처 일별 가격 추이 (그래프용)
+    - 각 판매처의 일별 최저가
     """
     if malls:
         mall_list = [m.strip() for m in malls.split(",") if m.strip()]
@@ -516,35 +516,24 @@ def get_tracked_malls_trends(
     try:
         rows = db.execute(text("""
             SELECT
-                COALESCE(snapshot_at, created_at) AS ts,
-                snapshot_id,
+                DATE(created_at) as date,
                 mall_name,
                 MIN(unit_price) as price
             FROM products
             WHERE mall_name IN :mall_list
-              AND COALESCE(snapshot_at, created_at) >= DATE_SUB(NOW(), INTERVAL :days DAY)
-            GROUP BY DATE(COALESCE(snapshot_at, created_at)),
-                     COALESCE(snapshot_id, HOUR(COALESCE(snapshot_at, created_at))),
-                     mall_name
-            ORDER BY ts ASC
+              AND created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)
+            GROUP BY DATE(created_at), mall_name
+            ORDER BY date ASC
         """), {"mall_list": tuple(mall_list), "days": days}).fetchall()
 
-        slot_data = {}
+        date_data = {}
         for row in rows:
-            ts_raw = row[0]
-            if hasattr(ts_raw, "strftime"):
-                ts_kst = _to_kst(ts_raw)
-                date_str = ts_kst.strftime("%m/%d")
-                time_str = ts_kst.strftime("%H:%M")
-            else:
-                date_str = str(ts_raw)[:5]
-                time_str = str(ts_raw)[11:16]
-            slot_key = f"{date_str} {time_str}"
-            if slot_key not in slot_data:
-                slot_data[slot_key] = {"date": date_str, "time": time_str}
-            slot_data[slot_key][row[2]] = row[3]
+            date_str = row[0].strftime("%m/%d") if hasattr(row[0], 'strftime') else str(row[0])
+            if date_str not in date_data:
+                date_data[date_str] = {"date": date_str}
+            date_data[date_str][row[1]] = row[2]
 
-        trend_data = list(slot_data.values())
+        trend_data = list(date_data.values())
 
         return {
             "days": days,
