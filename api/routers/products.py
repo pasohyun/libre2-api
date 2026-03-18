@@ -482,8 +482,8 @@ def get_tracked_malls_trends(
     db: Session = Depends(get_db)
 ):
     """
-    주요 판매처 일별 가격 추이 (그래프용)
-    - 각 판매처의 일별 최저가
+    주요 판매처 크롤링 시점별 최저가 추이 (그래프용)
+    - 각 판매처의 스냅샷별 최저가
     """
     if malls:
         mall_list = [m.strip() for m in malls.split(",") if m.strip()]
@@ -515,25 +515,36 @@ def get_tracked_malls_trends(
 
     try:
         rows = db.execute(text("""
-            SELECT 
-                DATE(created_at) as date,
+            SELECT
+                COALESCE(snapshot_at, created_at) AS ts,
+                snapshot_id,
                 mall_name,
                 MIN(unit_price) as price
             FROM products
             WHERE mall_name IN :mall_list
-              AND created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)
-            GROUP BY DATE(created_at), mall_name
-            ORDER BY date ASC
+              AND COALESCE(snapshot_at, created_at) >= DATE_SUB(NOW(), INTERVAL :days DAY)
+            GROUP BY DATE(COALESCE(snapshot_at, created_at)),
+                     COALESCE(snapshot_id, HOUR(COALESCE(snapshot_at, created_at))),
+                     mall_name
+            ORDER BY ts ASC
         """), {"mall_list": tuple(mall_list), "days": days}).fetchall()
 
-        date_data = {}
+        slot_data = {}
         for row in rows:
-            date_str = row[0].strftime("%m/%d") if hasattr(row[0], 'strftime') else str(row[0])
-            if date_str not in date_data:
-                date_data[date_str] = {"date": date_str}
-            date_data[date_str][row[1]] = row[2]
+            ts_raw = row[0]
+            if hasattr(ts_raw, "strftime"):
+                ts_kst = _to_kst(ts_raw)
+                date_str = ts_kst.strftime("%m/%d")
+                time_str = ts_kst.strftime("%H:%M")
+            else:
+                date_str = str(ts_raw)[:5]
+                time_str = str(ts_raw)[11:16]
+            slot_key = f"{date_str} {time_str}"
+            if slot_key not in slot_data:
+                slot_data[slot_key] = {"date": date_str, "time": time_str}
+            slot_data[slot_key][row[2]] = row[3]
 
-        trend_data = list(date_data.values())
+        trend_data = list(slot_data.values())
 
         return {
             "days": days,
@@ -553,12 +564,12 @@ def get_mall_timeline(
     db: Session = Depends(get_db)
 ):
     """
-    특정 판매처의 일별 가격 히스토리 (타임라인)
-    - 일별 최저가 상품 정보 (상품명, 가격, 수량, 단가, 링크, 이미지 등)
+    특정 판매처의 크롤링 시점별 최저가 히스토리 (타임라인)
+    - 스냅샷(또는 시간대)별 최저가 상품 정보
     """
     try:
         rows = db.execute(text("""
-            SELECT 
+            SELECT
                 p.product_name,
                 p.id,
                 p.unit_price,
@@ -568,37 +579,47 @@ def get_mall_timeline(
                 p.image_url,
                 p.card_image_path,
                 p.calc_method,
-                p.created_at
+                COALESCE(p.snapshot_at, p.created_at) AS ts,
+                p.snapshot_id
             FROM products p
             WHERE p.mall_name = :mall_name
-              AND p.created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)
-            ORDER BY p.created_at DESC
+              AND COALESCE(p.snapshot_at, p.created_at) >= DATE_SUB(NOW(), INTERVAL :days DAY)
+            ORDER BY COALESCE(p.snapshot_at, p.created_at) DESC
         """), {"mall_name": mall_name, "days": days}).fetchall()
 
-        daily_best = {}
+        # snapshot_id 또는 시간대(hour)별로 그룹핑하여 최저가 1건
+        slot_best = {}
         for row in rows:
-            captured_at_kst = _to_kst(row[9]) if hasattr(row[9], "strftime") else None
-            date_key = captured_at_kst.strftime("%Y-%m-%d") if captured_at_kst else str(row[9])[:10]
-            unit_price = row[2]
+            ts_raw = row[9]
+            snap_id = row[10]
+            captured_at_kst = _to_kst(ts_raw) if hasattr(ts_raw, "strftime") else None
+            date_key = captured_at_kst.strftime("%Y-%m-%d") if captured_at_kst else str(ts_raw)[:10]
+            hour_key = captured_at_kst.strftime("%H") if captured_at_kst else str(ts_raw)[11:13]
 
-            if date_key not in daily_best or unit_price < daily_best[date_key]["unitPrice"]:
+            if snap_id:
+                slot_key = f"{date_key}_{snap_id}"
+            else:
+                slot_key = f"{date_key}_{hour_key}"
+
+            unit_price = row[2]
+            if slot_key not in slot_best or unit_price < slot_best[slot_key]["unitPrice"]:
                 signed_card = _to_display_image_url(row[7])
-                daily_best[date_key] = {
+                slot_best[slot_key] = {
                     "id": row[1],
-                    "capturedAt": captured_at_kst.strftime("%Y-%m-%d %H:%M") if captured_at_kst else str(row[9]),
+                    "capturedAt": captured_at_kst.strftime("%Y-%m-%d %H:%M") if captured_at_kst else str(ts_raw),
                     "date": date_key,
+                    "time": captured_at_kst.strftime("%H:%M") if captured_at_kst else str(ts_raw)[11:16],
                     "productName": row[0],
                     "unitPrice": row[2],
                     "pack": row[3],
                     "price": row[4],
                     "url": row[5] or "#",
-                    # HTML 카드 화면에서는 원본 사이트 이미지를 사용한다.
                     "captureThumb": row[6] or "",
                     "cardImagePath": signed_card or "",
                     "calcMethod": row[8],
                 }
 
-        timeline = [daily_best[k] for k in sorted(daily_best.keys(), reverse=True)]
+        timeline = sorted(slot_best.values(), key=lambda x: x["capturedAt"], reverse=True)
 
         return {
             "mall_name": mall_name,
