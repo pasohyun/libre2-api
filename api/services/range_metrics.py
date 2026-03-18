@@ -211,16 +211,13 @@ def compute_seller_chart_data(
     seller_names: Optional[List[str]] = None,
     channel: str = "naver",
 ) -> Dict[str, List[Dict[str, Any]]]:
-    """Return {seller_name: [{date, time, min_price, other_prices}, ...]}
+    """Return {seller_name: [{date, time, min_price}, ...]}
 
-    min_price  → 선 그래프 (최저가 추이)
-    other_prices → 반투명 점 (나머지 가격 분포)
+    크롤링 시점(snapshot)별 최저 단가 1건.
     """
     start, end = _date_range(start_date, end_date)
     rows = _fetch_products(db, start, end, channel)
 
-    # Collect ALL prices per seller per slot
-    # by_seller_slot[seller][slot_key] = {date, time, prices: [int, ...]}
     by_seller_slot: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
 
     for r in rows:
@@ -245,28 +242,19 @@ def compute_seller_chart_data(
             slot_key = f"{date_str}_{time_str[:2]}"
 
         cur = by_seller_slot[seller].get(slot_key)
-        if cur is None:
+        if cur is None or price < cur["min_price"]:
             by_seller_slot[seller][slot_key] = {
                 "date": date_str,
                 "time": time_str,
-                "prices": [price],
+                "min_price": price,
             }
-        else:
-            cur["prices"].append(price)
 
     result: Dict[str, List[Dict[str, Any]]] = {}
     for seller, slot_map in by_seller_slot.items():
-        points = []
-        for slot in sorted(slot_map.values(), key=lambda x: (x["date"], x["time"])):
-            prices = sorted(slot["prices"])
-            min_price = prices[0]
-            other_prices = prices[1:]  # 최저가 제외 나머지
-            points.append({
-                "date": slot["date"],
-                "time": slot["time"],
-                "min_price": min_price,
-                "other_prices": other_prices,
-            })
+        points = sorted(
+            slot_map.values(),
+            key=lambda x: (x["date"], x["time"]),
+        )
         result[seller] = points
 
     return result

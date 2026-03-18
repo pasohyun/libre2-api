@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import html as _html
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
