@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from api.database import SessionLocal
-from api.schemas import MonthlyReportResponse
+from api.schemas import DateRangeReportResponse, MonthlyReportResponse
 from api.services.monthly_report_builder import build_monthly_report, render_markdown
+from api.services.range_report_builder import build_range_report, render_range_markdown
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -70,4 +73,62 @@ def get_monthly_report_markdown(
         "channel": channel,
         "threshold_price": threshold_price,
         "markdown": render_markdown(report),
+    }
+
+
+# ── Date-Range Report endpoints ─────────────────────────────────────
+
+def _validate_date_range(start_date: str, end_date: str) -> None:
+    try:
+        sd = datetime.strptime(start_date, "%Y-%m-%d").date()
+        ed = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(400, "start_date/end_date must be YYYY-MM-DD format")
+    if sd > ed:
+        raise HTTPException(400, "start_date must be <= end_date")
+    if (ed - sd).days > 90:
+        raise HTTPException(400, "Maximum date range is 90 days")
+
+
+@router.get("/range", response_model=DateRangeReportResponse)
+def get_range_report(
+    start_date: str = Query(..., description="Start date (YYYY-MM-DD, inclusive)"),
+    end_date: str = Query(..., description="End date (YYYY-MM-DD, inclusive)"),
+    threshold_price: int = Query(..., description="Threshold price (KRW)"),
+    channel: str = Query("naver", description="Channel/platform identifier"),
+    db: Session = Depends(get_db),
+):
+    _validate_date_range(start_date, end_date)
+    report = build_range_report(
+        db,
+        start_date=start_date,
+        end_date=end_date,
+        threshold_price=threshold_price,
+        channel=channel,
+    )
+    return report
+
+
+@router.get("/range/markdown")
+def get_range_report_markdown(
+    start_date: str = Query(..., description="Start date (YYYY-MM-DD, inclusive)"),
+    end_date: str = Query(..., description="End date (YYYY-MM-DD, inclusive)"),
+    threshold_price: int = Query(..., description="Threshold price (KRW)"),
+    channel: str = Query("naver", description="Channel/platform identifier"),
+    db: Session = Depends(get_db),
+):
+    _validate_date_range(start_date, end_date)
+    report = build_range_report(
+        db,
+        start_date=start_date,
+        end_date=end_date,
+        threshold_price=threshold_price,
+        channel=channel,
+    )
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "channel": channel,
+        "threshold_price": threshold_price,
+        "markdown": render_range_markdown(report),
     }

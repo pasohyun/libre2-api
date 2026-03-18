@@ -9,8 +9,7 @@
 Railway에서 다음 서비스들이 배포됩니다:
 
 - **`web`**: FastAPI 서버 (24/7 실행)
-- **`Cron Job A (00:00 KST)`**: 매일 자정 크롤링 실행
-- **`Cron Job B (12:00 KST)`**: 매일 정오 크롤링 실행
+- **`Cron Job`**: 하루 4회 자동 크롤링 실행 (00:00, 03:00, 12:00, 18:00 KST)
 - **`MySQL`**: 데이터베이스 서비스
 
 ### 2. Railway 설정
@@ -32,7 +31,7 @@ Railway에서 다음 서비스들이 배포됩니다:
 #### 2.3 Cron Job 서비스 추가
 
 1. **+ New** → **Cron Job** 선택
-2. **Schedule**: `0 0 * * *` (매일 00:00 KST) 또는 `0 12 * * *` (매일 12:00 KST)
+2. **Schedule**: `0 0,3,12,18 * * *` (매일 00:00, 03:00, 12:00, 18:00 KST)
 3. **Command**: `python -m scripts.crawl_naver`
 4. **Variables** 탭에서 환경 변수 설정:
    - `MYSQLHOST = ${{ MySQL.MYSQLHOST }}`
@@ -54,6 +53,8 @@ Railway에서 다음 서비스들이 배포됩니다:
 - `GET /health` - 헬스 체크
 - `GET /products/latest` - 최신 상품 데이터 (최신 크롤링 스냅샷)
 - `GET /products/lowest?limit=10` - 최저가 상품 조회
+- `POST /products/crawl/run` - 수동 크롤링 실행 (대시보드 버튼용)
+- `GET /products/crawl/status` - 수동/자동 크롤링 실행 상태 조회
 
 ## 💻 로컬 개발
 
@@ -76,7 +77,24 @@ NAVER_CLIENT_SECRET=your_client_secret
 
 # 검색 키워드
 SEARCH_KEYWORD=프리스타일 리브레2
+
+# S3 (선택)
+ENABLE_S3_UPLOAD=true
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_REGION=ap-northeast-2
+S3_BUCKET=your_bucket_name
+S3_PREFIX=libre2
+# 0 또는 음수면 해당 실행의 전체 상품 카드를 업로드
+S3_UPLOAD_MAX_PER_RUN=0
+ENABLE_CARD_RENDER=true
+# S3_PUBLIC_BASE_URL=https://cdn.example.com  # CloudFront 사용 시
+# S3_ENDPOINT_URL=https://s3.ap-northeast-2.amazonaws.com  # S3 호환 스토리지 사용 시
 ```
+
+`ENABLE_CARD_RENDER=true`이면 크롤링 시 상품 썸네일을 기반으로 증빙 카드 PNG를 생성한 뒤 S3에 업로드합니다.
+카드에는 생성 시각(KST), 단가, 총가격, 수량, 판매처, 링크가 포함됩니다.
+Railway에서 카드 렌더를 사용하려면 Linux 런타임 라이브러리가 필요하며, 본 저장소의 `nixpacks.toml`로 자동 설치됩니다.
 
 ### 실행 방법
 
@@ -134,6 +152,6 @@ python -m scripts.crawl_naver
 
 ## 📝 참고사항
 
-- 크롤링은 매일 00:00 KST와 12:00 KST에 자동 실행됩니다
+- 크롤링은 매일 00:00, 03:00, 12:00, 18:00 KST에 자동 실행됩니다
 - Railway Cron Job은 스케줄 시간에 컨테이너를 시작하고 작업 완료 후 종료합니다
 - 데이터베이스 스키마는 API 서버 시작 시 자동으로 생성됩니다 (`init_db()`)

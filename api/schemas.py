@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Any, Dict
 from datetime import datetime
 class Product(BaseModel):
+    id: int | None = None
     product_name: str
     unit_price: int
     quantity: int
@@ -13,8 +14,10 @@ class Product(BaseModel):
     calc_method: str
     link: str
     image_url: str
+    card_image_path: str | None = None
     channel: str | None = None
     market: str | None = None
+    snapshot_time: Optional[datetime] = None
 
 class ProductListResponse(BaseModel):
     snapshot_time: Optional[datetime] = None
@@ -42,6 +45,76 @@ class MonthlySellerMetric(BaseModel):
     dip_recover_count: Optional[int] = None
     sustained_below_count: Optional[int] = None
     cross_platform_mismatch: Optional[bool] = None
+
+
+# ── Date-Range Report models ────────────────────────────────────────
+
+class DateRangeSummary(BaseModel):
+    below_threshold_seller_count: int
+    top5_lowest: List[Dict[str, Any]]
+    global_min_seller: Optional[str] = None
+    global_min_price: Optional[int] = None
+    global_min_time: Optional[datetime] = None
+
+
+class BelowThresholdSnapshot(BaseModel):
+    """스냅샷(크롤링 시점) 1건 — 토글 열었을 때 보이는 개별 행"""
+    seller_name: str
+    platform: str
+    unit_price: int
+    total_price: int
+    quantity: int
+    time: Optional[datetime] = None
+    link: Optional[str] = None
+    image_url: Optional[str] = None
+    product_name: Optional[str] = None
+    calc_method: Optional[str] = None
+    card_image_path: Optional[str] = None
+
+
+class BelowThresholdItem(BaseModel):
+    """셀러별 요약 행 — 토글 닫힌 상태에서 보이는 최저가 1건"""
+    seller_name: str
+    platform: str
+    unit_price: int
+    total_price: int
+    quantity: int
+    time: Optional[datetime] = None
+    link: Optional[str] = None
+    image_url: Optional[str] = None
+    product_name: Optional[str] = None
+    calc_method: Optional[str] = None
+    card_image_path: Optional[str] = None
+    snapshots: List[BelowThresholdSnapshot] = []
+
+
+class ChartPoint(BaseModel):
+    date: str
+    time: str = ""
+    min_price: int
+
+
+class SellerDetailCard(BaseModel):
+    seller_name: str
+    platform: str
+    min_unit_price: int
+    min_time: Optional[datetime] = None
+    total_price: int
+    quantity: int
+    link: Optional[str] = None
+    card_image_path: Optional[str] = None
+    chart_data: List[ChartPoint] = []
+
+
+class DateRangeReportResponse(BaseModel):
+    start_date: str
+    end_date: str
+    threshold_price: int
+    channel: str
+    summary: DateRangeSummary
+    below_threshold_list: List[BelowThresholdItem]
+    seller_cards: List[SellerDetailCard]
+    generated_at: Optional[datetime] = None
 
 
 class MonthlyReportResponse(BaseModel):

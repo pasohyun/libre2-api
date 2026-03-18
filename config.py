@@ -22,6 +22,20 @@ DB_TABLE = os.getenv("DB_TABLE", "products")
 
 ENABLE_DB_SAVE = os.getenv("ENABLE_DB_SAVE", "false").lower() == "true"
 ENABLE_CARD_RENDER = os.getenv("ENABLE_CARD_RENDER", "false").lower() == "true"
+ENABLE_S3_UPLOAD = os.getenv("ENABLE_S3_UPLOAD", "false").lower() == "true"
+# false면 크롤링 중 자동 카드 생성은 건너뛰고, API 단건 생성만 허용한다.
+ENABLE_AUTO_CARD_RENDER = os.getenv("ENABLE_AUTO_CARD_RENDER", "true").lower() == "true"
+
+# S3 (AWS S3 / S3-compatible)
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+AWS_REGION = os.getenv("AWS_REGION", "ap-northeast-2")
+S3_BUCKET = os.getenv("S3_BUCKET")
+S3_PREFIX = os.getenv("S3_PREFIX", "libre2")
+S3_PUBLIC_BASE_URL = os.getenv("S3_PUBLIC_BASE_URL")  # e.g. CloudFront URL
+S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL")  # optional for S3-compatible storage
+# <= 0 이면 해당 실행에서 생성된 모든 상품 카드를 업로드
+S3_UPLOAD_MAX_PER_RUN = int(os.getenv("S3_UPLOAD_MAX_PER_RUN", "0"))
 
 NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
