@@ -245,9 +245,9 @@ def render_range_markdown(report: Dict[str, Any]) -> str:
         lines.append(f"- 최저 단가: {card['min_unit_price']:,}원 @ {card['min_time']}")
         chart = card.get("chart_data") or []
         if chart:
-            lines.append(f"- 일별 최저가 데이터 ({len(chart)}일):")
+            lines.append(f"- 최저가 시계열 ({len(chart)}건):")
             for pt in chart:
-                lines.append(f"  - {pt['date']}: {pt['min_price']:,}원")
+                lines.append(f"  - {pt['date']} {pt.get('time', '')}: {pt['min_price']:,}원")
         lines.append("")
 
     return "\n".join(lines)

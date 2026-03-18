@@ -74,6 +74,7 @@ class BelowThresholdItem(BaseModel):
 
 class ChartPoint(BaseModel):
     date: str
+    time: str = ""
     min_price: int
 
 
