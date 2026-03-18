@@ -57,7 +57,8 @@ class DateRangeSummary(BaseModel):
     global_min_time: Optional[datetime] = None
 
 
-class BelowThresholdItem(BaseModel):
+class BelowThresholdSnapshot(BaseModel):
+    """스냅샷(크롤링 시점) 1건 — 토글 열었을 때 보이는 개별 행"""
     seller_name: str
     platform: str
     unit_price: int
@@ -70,6 +71,23 @@ class BelowThresholdItem(BaseModel):
     calc_method: Optional[str] = None
     card_image_path: Optional[str] = None
     card_html: Optional[str] = None
+
+
+class BelowThresholdItem(BaseModel):
+    """셀러별 요약 행 — 토글 닫힌 상태에서 보이는 최저가 1건"""
+    seller_name: str
+    platform: str
+    unit_price: int
+    total_price: int
+    quantity: int
+    time: Optional[datetime] = None
+    link: Optional[str] = None
+    image_url: Optional[str] = None
+    product_name: Optional[str] = None
+    calc_method: Optional[str] = None
+    card_image_path: Optional[str] = None
+    card_html: Optional[str] = None
+    snapshots: List[BelowThresholdSnapshot] = []
 
 
 class ChartPoint(BaseModel):

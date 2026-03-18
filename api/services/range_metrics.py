@@ -139,7 +139,7 @@ def compute_seller_metrics(
     }
 
 
-# ── 2) Below-threshold detail list ─────────────────────────────────
+# ── 2) Below-threshold detail list (grouped by seller) ─────────────
 def compute_below_threshold_detail(
     db: Session,
     *,
@@ -148,7 +148,15 @@ def compute_below_threshold_detail(
     threshold_price: int,
     channel: str = "naver",
 ) -> List[Dict[str, Any]]:
-    """Return list of below-threshold records with card/capture info."""
+    """Return seller-grouped below-threshold data.
+
+    Each entry = {
+        seller_name, platform, min_unit_price, min_time, ..., card_html,
+        snapshots: [ {unit_price, total_price, quantity, time, link, ...}, ... ]
+    }
+    Top-level fields = seller's overall min (토글 닫힌 상태).
+    snapshots = 스냅샷별 전체 목록 (토글 열린 상태).
+    """
     start, end = _date_range(start_date, end_date)
     rows = _fetch_products(db, start, end, channel)
 
@@ -180,15 +188,16 @@ def compute_below_threshold_detail(
                 "card_image_path": r.get("card_image_path"),
             }
 
-    # flatten, keep only the min per seller
-    seller_mins: Dict[str, Dict] = {}
+    result: List[Dict[str, Any]] = []
     for seller, buckets in by_seller.items():
-        for item in buckets.values():
-            cur = seller_mins.get(seller)
-            if cur is None or item["unit_price"] < cur["unit_price"]:
-                seller_mins[seller] = item
+        all_snapshots = sorted(buckets.values(), key=lambda x: (x["time"], x["unit_price"]))
+        # seller-level min
+        min_item = min(all_snapshots, key=lambda x: (x["unit_price"], x["time"]))
+        result.append({
+            **min_item,
+            "snapshots": all_snapshots,
+        })
 
-    result = list(seller_mins.values())
     result.sort(key=lambda x: (x["unit_price"], x["time"]))
     return result
 
