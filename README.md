@@ -9,7 +9,8 @@
 Railway에서 다음 서비스들이 배포됩니다:
 
 - **`web`**: FastAPI 서버 (24/7 실행)
-- **`Cron Job`**: 하루 4회 자동 크롤링 실행 (00:00, 03:00, 12:00, 18:00 KST)
+- **`Cron Job (네이버)`**: 하루 4회 네이버 자동 크롤링 (00:00, 03:00, 12:00, 18:00 KST)
+- **`Cron Job (쿠팡)`**: 하루 4회 쿠팡 브랜드 스토어 자동 크롤링 (00:00, 03:00, 12:00, 18:00 KST)
 - **`MySQL`**: 데이터베이스 서비스
 
 ### 2. Railway 설정
@@ -43,6 +44,25 @@ Railway에서 다음 서비스들이 배포됩니다:
    - `NAVER_CLIENT_SECRET`: 네이버 API 클라이언트 시크릿
    - `SEARCH_KEYWORD`: 검색 키워드
    - `ENABLE_DB_SAVE=true`
+
+#### 2.4 쿠팡 브랜드 스토어 Cron Job 서비스 추가
+
+1. **+ New** → **Cron Job** 선택
+2. **Schedule**: `0 0,3,12,18 * * *` (매일 00:00, 03:00, 12:00, 18:00 KST — 네이버와 동일)
+3. **Command**: `python -m scripts.crawl_coupang_brand`
+4. **Variables** 탭에서 환경 변수 설정:
+   - `MYSQLHOST = ${{ MySQL.MYSQLHOST }}`
+   - `MYSQLUSER = ${{ MySQL.MYSQLUSER }}`
+   - `MYSQLPASSWORD = ${{ MySQL.MYSQLPASSWORD }}`
+   - `MYSQLDATABASE = ${{ MySQL.MYSQLDATABASE }}`
+   - `MYSQLPORT = ${{ MySQL.MYSQLPORT }}`
+   - `SEARCH_KEYWORD`: 검색 키워드
+   - `ENABLE_DB_SAVE=true`
+
+**크롤링 대상 브랜드 스토어:**
+- 필라이즈: `https://shop.coupang.com/pillyze/?platform=p`
+- 글루코핏: `https://shop.coupang.com/glucofit/?platform=p`
+- 닥터다이어리: `https://shop.coupang.com/A00158907/?platform=p`
 
 **참고**: Variables에서 MySQL 서비스를 참조하는 변수를 추가하면 Architecture 탭에서 자동으로 화살표(연결)가 생성됩니다.
 
