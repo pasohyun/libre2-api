@@ -6,3 +6,4 @@ openaikey.env
 screenshots/
 scripts/coupang_urls.json.bak
 scripts/coupang_urls.json
+run_coupang_crawl.bat

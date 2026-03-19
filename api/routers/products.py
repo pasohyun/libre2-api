@@ -165,26 +165,23 @@ def get_latest_products(db: Session = Depends(get_db)):
     """
     try:
         rows = db.execute(text("""
-            WITH latest AS (
-                SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
+            WITH latest_per_channel AS (
+                SELECT channel, MAX(snapshot_id) AS snapshot_id
                 FROM products
-                ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
-                LIMIT 1
+                WHERE snapshot_id IS NOT NULL
+                GROUP BY channel
             )
-            SELECT 
+            SELECT
                 p.id,
                 keyword, product_name, unit_price, quantity, total_price,
                 mall_name, calc_method, link,
                 p.image_url AS image_url,
                 card_image_path,
-                channel, market,
+                p.channel, market,
                 COALESCE(p.snapshot_at, p.created_at) AS snapshot_time
             FROM products p
-            CROSS JOIN latest l
-            WHERE (
-                (l.snapshot_id IS NOT NULL AND p.snapshot_id = l.snapshot_id)
-                OR (l.snapshot_id IS NULL AND COALESCE(p.snapshot_at, p.created_at) = l.snapshot_time)
-            )
+            INNER JOIN latest_per_channel lc
+                ON p.channel = lc.channel AND p.snapshot_id = lc.snapshot_id
             ORDER BY unit_price ASC
         """)).mappings().all()
 

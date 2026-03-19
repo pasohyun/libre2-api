@@ -44,18 +44,18 @@ BRAND_STORES = [
 BRAND_KEYWORD = os.getenv("COUPANG_BRAND_KEYWORD", config.SEARCH_KEYWORD)
 
 # 브라우저 내에서 실행할 JS: 상품 링크에서 정보 추출
-JS_EXTRACT = r"""() => {
+JS_EXTRACT = """() => {
     const links = document.querySelectorAll('a[href*="/products/"]');
     const results = [];
     const seen = new Set();
 
     for (const link of links) {
         const href = link.getAttribute('href') || '';
-        const match = href.match(/products\/(\d+)/);
+        const match = href.match(/products\\/(\\d+)/);
         if (!match) continue;
         const pid = match[1];
 
-        const itemMatch = href.match(/itemId=(\d+)/);
+        const itemMatch = href.match(/itemId=(\\d+)/);
         const itemId = itemMatch ? itemMatch[1] : '';
         const key = pid + '_' + itemId;
 
