@@ -165,11 +165,21 @@ def get_latest_products(db: Session = Depends(get_db)):
     """
     try:
         rows = db.execute(text("""
-            WITH latest_per_channel AS (
-                SELECT channel, MAX(snapshot_id) AS snapshot_id
+            WITH latest_naver AS (
+                SELECT snapshot_id
                 FROM products
                 WHERE snapshot_id IS NOT NULL
-                GROUP BY channel
+                  AND market != '쿠팡'
+                ORDER BY snapshot_id DESC
+                LIMIT 1
+            ),
+            latest_coupang_brand AS (
+                SELECT snapshot_id
+                FROM products
+                WHERE snapshot_id IS NOT NULL
+                  AND market = '쿠팡'
+                ORDER BY snapshot_id DESC
+                LIMIT 1
             )
             SELECT
                 p.id,
@@ -180,8 +190,8 @@ def get_latest_products(db: Session = Depends(get_db)):
                 p.channel, market,
                 COALESCE(p.snapshot_at, p.created_at) AS snapshot_time
             FROM products p
-            INNER JOIN latest_per_channel lc
-                ON p.channel = lc.channel AND p.snapshot_id = lc.snapshot_id
+            WHERE p.snapshot_id = (SELECT snapshot_id FROM latest_naver)
+               OR p.snapshot_id = (SELECT snapshot_id FROM latest_coupang_brand)
             ORDER BY unit_price ASC
         """)).mappings().all()
 
