@@ -8,27 +8,9 @@ Playwright로 JS 렌더링 후 DOM에서 상품 정보를 추출.
 """
 import os
 import re
-import subprocess
 import uuid
 from datetime import datetime
 from typing import List, Dict, Any
-
-
-def _ensure_playwright_browsers():
-    """Playwright chromium 브라우저가 없으면 자동 설치한다."""
-    try:
-        from playwright.sync_api import sync_playwright as _sp
-        with _sp() as p:
-            path = p.chromium.executable_path
-            if not os.path.exists(path):
-                raise FileNotFoundError(path)
-    except Exception:
-        print("[SETUP] Playwright chromium 설치 중...")
-        subprocess.check_call(["python", "-m", "playwright", "install", "chromium"])
-        print("[SETUP] 설치 완료")
-
-
-_ensure_playwright_browsers()
 
 from playwright.sync_api import sync_playwright
 

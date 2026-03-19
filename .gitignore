@@ -2,3 +2,6 @@ __pycache__/
 .env
 /venv
 openaikey.env
+.claude/
+screenshots/
+scripts/coupang_urls.json
