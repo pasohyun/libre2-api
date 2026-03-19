@@ -4,4 +4,5 @@ __pycache__/
 openaikey.env
 .claude/
 screenshots/
+scripts/coupang_urls.json.bak
 scripts/coupang_urls.json

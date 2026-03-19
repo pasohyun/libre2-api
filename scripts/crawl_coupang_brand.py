@@ -44,7 +44,7 @@ BRAND_STORES = [
 BRAND_KEYWORD = os.getenv("COUPANG_BRAND_KEYWORD", config.SEARCH_KEYWORD)
 
 # 브라우저 내에서 실행할 JS: 상품 링크에서 정보 추출
-JS_EXTRACT = """() => {
+JS_EXTRACT = r"""() => {
     const links = document.querySelectorAll('a[href*="/products/"]');
     const results = [];
     const seen = new Set();
@@ -125,21 +125,40 @@ def crawl_brand_store(url: str) -> List[Dict[str, Any]]:
     print(f"[BRAND] 크롤링: {url}")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-blink-features=AutomationControlled",
+            ],
+        )
         context = browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
+                "Chrome/131.0.0.0 Safari/537.36"
             ),
             viewport={"width": 1920, "height": 1080},
             locale="ko-KR",
+            java_script_enabled=True,
         )
+        # webdriver 속성 제거 (봇 탐지 우회)
+        context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+        """)
         page = context.new_page()
 
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
             page.wait_for_timeout(5000)
+
+            # Access Denied 감지 시 재시도
+            title = page.title()
+            if "Access Denied" in title or "denied" in title.lower():
+                print("  [RETRY] Access Denied 감지, 재시도...")
+                page.wait_for_timeout(3000)
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_timeout(5000)
 
             # 점진적 스크롤로 lazy-load 상품 전부 로딩
             prev_count = 0
