@@ -180,6 +180,11 @@ def get_latest_products(db: Session = Depends(get_db)):
                   AND market = '쿠팡'
                 ORDER BY snapshot_id DESC
                 LIMIT 1
+            ),
+            coupang_brand_keys AS (
+                SELECT product_name, quantity
+                FROM products
+                WHERE snapshot_id = (SELECT snapshot_id FROM latest_coupang_brand)
             )
             SELECT
                 p.id,
@@ -190,8 +195,16 @@ def get_latest_products(db: Session = Depends(get_db)):
                 p.channel, market,
                 COALESCE(p.snapshot_at, p.created_at) AS snapshot_time
             FROM products p
-            WHERE p.snapshot_id = (SELECT snapshot_id FROM latest_naver)
-               OR p.snapshot_id = (SELECT snapshot_id FROM latest_coupang_brand)
+            WHERE (
+                p.snapshot_id = (SELECT snapshot_id FROM latest_coupang_brand)
+            ) OR (
+                p.snapshot_id = (SELECT snapshot_id FROM latest_naver)
+                AND NOT EXISTS (
+                    SELECT 1 FROM coupang_brand_keys cb
+                    WHERE cb.product_name = p.product_name
+                      AND cb.quantity = p.quantity
+                )
+            )
             ORDER BY unit_price ASC
         """)).mappings().all()
 
