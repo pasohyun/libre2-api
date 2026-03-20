@@ -463,21 +463,31 @@ def get_products_below_target(
 @router.get("/tracked-malls/summary")
 def get_tracked_malls_summary(
     malls: str = Query(None, description="판매처 목록 (쉼표 구분, 미지정시 설정값 사용)"),
+    channel: str = Query(None, description="채널 필터 (naver, coupang, others)"),
     db: Session = Depends(get_db)
 ):
     """
     주요 판매처 요약 (카드 표시용)
     - 현재 단가, 최근 7일 변동폭, 기준가 이하 횟수
+    - channel 파라미터로 특정 채널의 판매처만 조회 가능
     """
+    # 채널 필터 SQL 조건 생성
+    channel_filter_sql = ""
+    channel_params = {}
+    if channel:
+        channel_filter_sql = " AND p.channel = :channel"
+        channel_params["channel"] = channel
+
     if malls:
         mall_list = [_to_db_mall_name(m.strip()) for m in malls.split(",") if m.strip()]
-    elif config.TRACKED_MALLS:
+    elif config.TRACKED_MALLS and not channel:
         mall_list = [_to_db_mall_name(m) for m in config.TRACKED_MALLS]
     else:
-        top_malls = db.execute(text("""
+        top_malls = db.execute(text(f"""
             WITH latest AS (
                 SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
                 FROM products
+                {"WHERE channel = :channel" if channel else ""}
                 ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
                 LIMIT 1
             )
@@ -488,10 +498,11 @@ def get_tracked_malls_summary(
                 (l.snapshot_id IS NOT NULL AND p.snapshot_id = l.snapshot_id)
                 OR (l.snapshot_id IS NULL AND COALESCE(p.snapshot_at, p.created_at) = l.snapshot_time)
             )
+            {channel_filter_sql}
             GROUP BY mall_name
             ORDER BY MIN(unit_price) ASC
-            LIMIT 5
-        """)).fetchall()
+            LIMIT 10
+        """), {**channel_params}).fetchall()
         mall_list = [row[0] for row in top_malls]
 
     if not mall_list:
@@ -501,10 +512,11 @@ def get_tracked_malls_summary(
         results = []
         for mall_name in mall_list:
             mall_name_list = _mall_name_candidates(mall_name)
-            current = db.execute(text("""
+            current = db.execute(text(f"""
                 WITH latest AS (
                     SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
                     FROM products
+                    {"WHERE channel = :channel" if channel else ""}
                     ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
                     LIMIT 1
                 )
@@ -516,34 +528,37 @@ def get_tracked_malls_summary(
                       (l.snapshot_id IS NOT NULL AND p.snapshot_id = l.snapshot_id)
                       OR (l.snapshot_id IS NULL AND COALESCE(p.snapshot_at, p.created_at) = l.snapshot_time)
                   )
-            """), {"mall_name_list": mall_name_list}).fetchone()
+                  {channel_filter_sql}
+            """), {"mall_name_list": mall_name_list, **channel_params}).fetchone()
 
             current_price = current[0] if current and current[0] else None
 
-            week_stats = db.execute(text("""
-                SELECT 
+            week_stats = db.execute(text(f"""
+                SELECT
                     MIN(unit_price) as min_price,
                     MAX(unit_price) as max_price
                 FROM (
                     SELECT MIN(unit_price) as unit_price, DATE(created_at) as date
-                    FROM products
+                    FROM products p
                     WHERE mall_name IN :mall_name_list
                       AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+                      {channel_filter_sql}
                     GROUP BY DATE(created_at)
                 ) daily_prices
-            """), {"mall_name_list": mall_name_list}).fetchone()
+            """), {"mall_name_list": mall_name_list, **channel_params}).fetchone()
 
             min_7d = week_stats[0] if week_stats and week_stats[0] else current_price
             max_7d = week_stats[1] if week_stats and week_stats[1] else current_price
             change_7d = (max_7d - min_7d) if min_7d and max_7d else 0
 
-            below_count = db.execute(text("""
+            below_count = db.execute(text(f"""
                 SELECT COUNT(DISTINCT DATE(created_at)) as count
-                FROM products
+                FROM products p
                 WHERE mall_name IN :mall_name_list
                   AND unit_price <= :target_price
                   AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-            """), {"mall_name_list": mall_name_list, "target_price": config.TARGET_PRICE}).fetchone()
+                  {channel_filter_sql}
+            """), {"mall_name_list": mall_name_list, "target_price": config.TARGET_PRICE, **channel_params}).fetchone()
 
             results.append({
                 "mall_name": _to_public_mall_name(mall_name),
@@ -577,21 +592,31 @@ def get_tracked_malls_summary(
 def get_tracked_malls_trends(
     malls: str = Query(None, description="판매처 목록 (쉼표 구분)"),
     days: int = Query(30, ge=1, le=90, description="조회 기간 (일)"),
+    channel: str = Query(None, description="채널 필터 (naver, coupang, others)"),
     db: Session = Depends(get_db)
 ):
     """
     주요 판매처 일별 가격 추이 (그래프용)
     - 각 판매처의 일별 최저가
+    - channel 파라미터로 특정 채널의 판매처만 조회 가능
     """
+    # 채널 필터 SQL 조건 생성
+    channel_filter_sql = ""
+    channel_params = {}
+    if channel:
+        channel_filter_sql = " AND channel = :channel"
+        channel_params["channel"] = channel
+
     if malls:
         mall_list = [_to_db_mall_name(m.strip()) for m in malls.split(",") if m.strip()]
-    elif config.TRACKED_MALLS:
+    elif config.TRACKED_MALLS and not channel:
         mall_list = [_to_db_mall_name(m) for m in config.TRACKED_MALLS]
     else:
-        top_malls = db.execute(text("""
+        top_malls = db.execute(text(f"""
             WITH latest AS (
                 SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
                 FROM products
+                {"WHERE channel = :channel" if channel else ""}
                 ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
                 LIMIT 1
             )
@@ -602,10 +627,11 @@ def get_tracked_malls_trends(
                 (l.snapshot_id IS NOT NULL AND p.snapshot_id = l.snapshot_id)
                 OR (l.snapshot_id IS NULL AND COALESCE(p.snapshot_at, p.created_at) = l.snapshot_time)
             )
+            {channel_filter_sql.replace("channel", "p.channel") if channel else ""}
             GROUP BY mall_name
             ORDER BY MIN(unit_price) ASC
-            LIMIT 5
-        """)).fetchall()
+            LIMIT 10
+        """), {**channel_params}).fetchall()
         mall_list = [row[0] for row in top_malls]
 
     if not mall_list:
@@ -622,9 +648,10 @@ def get_tracked_malls_trends(
             FROM products
             WHERE {mall_name_std_expr} IN :mall_list
               AND created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)
+              {channel_filter_sql}
             GROUP BY DATE(created_at), {mall_name_std_expr}
             ORDER BY date ASC
-        """), {"mall_list": tuple(mall_list), "days": days}).fetchall()
+        """), {"mall_list": tuple(mall_list), "days": days, **channel_params}).fetchall()
 
         date_data = {}
         for row in rows:
@@ -662,6 +689,7 @@ def get_tracked_malls_trends(
 def get_mall_timeline(
     mall_name: str = Query(..., description="판매처 이름"),
     days: int = Query(30, ge=1, le=90, description="조회 기간 (일)"),
+    channel: str = Query(None, description="채널 필터 (naver, coupang, others)"),
     db: Session = Depends(get_db)
 ):
     """
@@ -670,7 +698,12 @@ def get_mall_timeline(
     """
     try:
         db_mall_name_list = _mall_name_candidates(mall_name)
-        rows = db.execute(text("""
+        channel_filter_sql = ""
+        params = {"mall_name_list": db_mall_name_list, "days": days}
+        if channel:
+            channel_filter_sql = " AND p.channel = :channel"
+            params["channel"] = channel
+        rows = db.execute(text(f"""
             SELECT
                 p.product_name,
                 p.id,
@@ -686,8 +719,9 @@ def get_mall_timeline(
             FROM products p
             WHERE p.mall_name IN :mall_name_list
               AND COALESCE(p.snapshot_at, p.created_at) >= DATE_SUB(NOW(), INTERVAL :days DAY)
+              {channel_filter_sql}
             ORDER BY COALESCE(p.snapshot_at, p.created_at) DESC
-        """), {"mall_name_list": db_mall_name_list, "days": days}).fetchall()
+        """), params).fetchall()
 
         # snapshot_id 또는 시간대(hour)별로 그룹핑하여 최저가 1건
         slot_best = {}
