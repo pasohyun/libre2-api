@@ -50,6 +50,23 @@ SLEEP_SEC = float(os.getenv("COUPANG_SLEEP_SEC", "1.3"))
 # ✅ 기준 단가 필터 유지(85000 이하)
 TARGET_UNIT_PRICE = int(os.getenv("TARGET_UNIT_PRICE", "85000"))
 
+LIBRE2_INCLUDE_PATTERNS = [
+    r"프리스타일\s*리브레\s*2",
+    r"리브레\s*2",
+    r"freestyle\s*libre\s*2",
+    r"libre\s*2",
+]
+
+NON_LIBRE_CGM_EXCLUDE_PATTERNS = [
+    r"덱스콤",
+    r"dexcom",
+    r"\bg\s*7\b",
+    r"\bg7\b",
+    r"가디언",
+    r"guardian",
+    r"케어센스\s*에어",
+]
+
 
 def _auth_header(method: str, url_path_with_query: str) -> str:
     path, *query = url_path_with_query.split("?")
@@ -96,6 +113,17 @@ def _is_accessory(title: str) -> bool:
 
     # 악세서리 단어 있는데 '+' 없으면 악세서리 단독 판매로 보고 제외
     return True
+
+
+def _is_target_libre2_product(title: str) -> bool:
+    text = (title or "").strip()
+    if not text:
+        return False
+
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in NON_LIBRE_CGM_EXCLUDE_PATTERNS):
+        return False
+
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in LIBRE2_INCLUDE_PATTERNS)
 
 
 def analyze_product(title: str, total_price: int):
@@ -234,7 +262,7 @@ def run_crawling():
     stat_accessory = 0
     stat_low_unit = 0
     stat_over_target = 0
-    stat_other_brand = 0
+    stat_non_target = 0
     stat_invalid = 0
 
     for i in range(1, CALLS + 1):
@@ -287,8 +315,8 @@ def run_crawling():
                 stat_accessory += 1
                 continue
 
-            if re.search(r"(바로잰|바로 잰|바로젠|핏\s*fit|\bfit\b)", title, re.IGNORECASE):
-                stat_other_brand += 1
+            if not _is_target_libre2_product(title):
+                stat_non_target += 1
                 continue
 
             if unit_price < 65000:
@@ -322,7 +350,11 @@ def run_crawling():
     print(f"calls={CALLS}, limit={COUPANG_LIMIT}, total_fetched={total_fetched}")
     print(f"unique_productIds={len(seen)}")
     print(f"kept_rows(unit<=target)={len(kept_rows)} (target={TARGET}, filter={'ON' if USE_TARGET else 'OFF'})")
-    print(f"excluded: invalid={stat_invalid}, dup={stat_dup}, accessory={stat_accessory}, unit<65000={stat_low_unit}, over_target={stat_over_target}, other_brand={stat_other_brand}")
+    print(
+        "excluded: "
+        f"invalid={stat_invalid}, dup={stat_dup}, accessory={stat_accessory}, "
+        f"non_target={stat_non_target}, unit<65000={stat_low_unit}, over_target={stat_over_target}"
+    )
 
     # ✅ CSV 저장
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")

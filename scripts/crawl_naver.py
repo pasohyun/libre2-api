@@ -46,6 +46,23 @@ MALL_NAME_NORMALIZE_MAP = {
     "무화당": "닥다몰",
 }
 
+LIBRE2_INCLUDE_PATTERNS = [
+    r"프리스타일\s*리브레\s*2",
+    r"리브레\s*2",
+    r"freestyle\s*libre\s*2",
+    r"libre\s*2",
+]
+
+NON_LIBRE_CGM_EXCLUDE_PATTERNS = [
+    r"덱스콤",
+    r"dexcom",
+    r"\bg\s*7\b",
+    r"\bg7\b",
+    r"가디언",
+    r"guardian",
+    r"케어센스\s*에어",
+]
+
 
 def _log(message: str):
     # Cron 환경에서 출력 버퍼링으로 로그가 늦게 보이는 문제를 줄인다.
@@ -57,6 +74,18 @@ def _normalize_mall_name(value: str) -> str:
     if not raw:
         return raw
     return MALL_NAME_NORMALIZE_MAP.get(raw, raw)
+
+
+def _is_target_libre2_product(title: str) -> bool:
+    text = (title or "").strip()
+    if not text:
+        return False
+
+    # 덱스콤/가디언 등 타 CGM 모델을 먼저 제외한다.
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in NON_LIBRE_CGM_EXCLUDE_PATTERNS):
+        return False
+
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in LIBRE2_INCLUDE_PATTERNS)
 
 
 def _upload_product_images_to_s3(rows, *, snapshot_id: str):
@@ -405,9 +434,15 @@ def get_naver_data_all(query):
             kept_before = len(all_results)
             excluded_by_category = 0
             excluded_by_accessory = 0
+            excluded_by_non_target = 0
 
             for item in items:
                 title = item.get("title", "").replace("<b>", "").replace("</b>", "")
+                if not _is_target_libre2_product(title):
+                    excluded_by_non_target += 1
+                    if VERBOSE_EXCLUDE_LOG:
+                        _log(f"  ⛔ 제외 (비대상 상품): {title[:50]}...")
+                    continue
                 total_price = int(item.get("lprice", 0) or 0)
                 image_url = item.get("image", "")
                 mall = item.get("mallName", "")
@@ -505,6 +540,7 @@ def get_naver_data_all(query):
             _log(
                 "page start="
                 f"{start} fetched={len(items)} kept={kept_now - kept_before} "
+                f"excluded_non_target={excluded_by_non_target} "
                 f"excluded_category={excluded_by_category} "
                 f"excluded_accessory={excluded_by_accessory} "
                 f"kept_total={kept_now}"
