@@ -138,8 +138,8 @@ def analyze_product(title: str, total_price: int):
         clean_title = re.sub(p, " ", clean_title, flags=re.IGNORECASE)
 
     sensor_qty_patterns = [
-        r"(측정기|센서|리브레\s*2?)\s*(\d+)\s*(개|개입|세트|팩|박스)",
-        r"(\d+)\s*(개|개입|세트|팩|박스)\s*(측정기|센서)",
+        r"(측정기|센서|리브레\s*2?)\s*(\d+)\s*(개입|세트|팩|박스|개(?!\s*[인용]))",
+        r"(\d+)\s*(개입|세트|팩|박스|개(?!\s*[인용]))\s*(측정기|센서)",
         r"(측정기|센서|리브레)\s*[xX*]\s*(\d+)",
     ]
 
