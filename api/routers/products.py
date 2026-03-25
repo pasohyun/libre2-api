@@ -495,6 +495,17 @@ def get_tracked_malls_summary(
         mall_list = [_to_db_mall_name(m.strip()) for m in malls.split(",") if m.strip()]
     elif config.TRACKED_MALLS and not channel:
         mall_list = [_to_db_mall_name(m) for m in config.TRACKED_MALLS]
+    elif channel == "naver":
+        # 네이버 채널은 전체 기간에 한 번이라도 등장한 판매처를 모두 노출한다.
+        mall_name_std_expr = _mall_name_std_sql("mall_name")
+        all_naver_malls = db.execute(text(f"""
+            SELECT {mall_name_std_expr} AS mall_name
+            FROM products
+            WHERE channel = :channel
+            GROUP BY {mall_name_std_expr}
+            ORDER BY COUNT(*) DESC, MIN(unit_price) ASC
+        """), {"channel": channel}).fetchall()
+        mall_list = [row[0] for row in all_naver_malls]
     else:
         top_malls = db.execute(text(f"""
             WITH latest AS (
@@ -525,23 +536,14 @@ def get_tracked_malls_summary(
         results = []
         for mall_name in mall_list:
             mall_name_list = _mall_name_candidates(mall_name)
+            # 최신 스냅샷이 아닌 "해당 판매처의 최신 수집값"을 현재가로 사용한다.
             current = db.execute(text(f"""
-                WITH latest AS (
-                    SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
-                    FROM products
-                    {"WHERE channel = :channel" if channel else ""}
-                    ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
-                    LIMIT 1
-                )
-                SELECT MIN(unit_price) as current_price
+                SELECT p.unit_price as current_price
                 FROM products p
-                CROSS JOIN latest l
                 WHERE p.mall_name IN :mall_name_list
-                  AND (
-                      (l.snapshot_id IS NOT NULL AND p.snapshot_id = l.snapshot_id)
-                      OR (l.snapshot_id IS NULL AND COALESCE(p.snapshot_at, p.created_at) = l.snapshot_time)
-                  )
                   {channel_filter_sql}
+                ORDER BY COALESCE(p.snapshot_at, p.created_at) DESC, p.id DESC
+                LIMIT 1
             """), {"mall_name_list": mall_name_list, **channel_params}).fetchone()
 
             current_price = current[0] if current and current[0] else None
