@@ -101,10 +101,18 @@ def _to_display_image_url(value: str | None) -> str | None:
 
 
 _MALL_NAME_DB_TO_PUBLIC = {
-    "글루어트": "글루코핏",
-    "무화당": "닥다몰",
+    "랜식": "랜식(글핏몰)",
+    "글핏몰": "랜식(글핏몰)",
+    "글루코핏": "랜식(글핏몰)",
+    "글루어트": "랜식(글핏몰)",
+    "닥다몰": "닥터다이어리(닥다몰)",
+    "무화당": "닥터다이어리(무화당)",
 }
-_MALL_NAME_PUBLIC_TO_LEGACY = {v: k for k, v in _MALL_NAME_DB_TO_PUBLIC.items()}
+_MALL_NAME_PUBLIC_TO_DB_CANDIDATES = {
+    "랜식(글핏몰)": ("랜식", "글핏몰", "글루코핏", "글루어트"),
+    "닥터다이어리(닥다몰)": ("닥다몰",),
+    "닥터다이어리(무화당)": ("무화당",),
+}
 
 
 def _to_public_mall_name(name: str | None) -> str:
@@ -118,9 +126,11 @@ def _to_db_mall_name(name: str | None) -> str:
     raw = (name or "").strip()
     if not raw:
         return ""
-    # DB는 표준 이름(글루코핏/닥다몰)으로 저장되므로
-    # 과거 이름이 들어와도 표준 이름으로 조회한다.
-    return _to_public_mall_name(raw)
+    # 공개 표준명이 들어오면 DB 후보군의 대표 키로 변환한다.
+    candidates = _MALL_NAME_PUBLIC_TO_DB_CANDIDATES.get(raw)
+    if candidates:
+        return candidates[0]
+    return raw
 
 
 def _mall_name_candidates(name: str | None) -> tuple[str, ...]:
@@ -129,10 +139,9 @@ def _mall_name_candidates(name: str | None) -> tuple[str, ...]:
     예) 글루코핏 -> (글루코핏, 글루어트)
     """
     public_name = _to_public_mall_name(name)
-    legacy_name = _MALL_NAME_PUBLIC_TO_LEGACY.get(public_name)
-    values = [public_name]
-    if legacy_name:
-        values.append(legacy_name)
+    values = [public_name, (name or "").strip()]
+    for candidate in _MALL_NAME_PUBLIC_TO_DB_CANDIDATES.get(public_name, ()):
+        values.append(candidate)
     # 빈 문자열 제거 + 순서 유지 dedupe
     result = []
     seen = set()
@@ -150,8 +159,12 @@ def _mall_name_std_sql(column_name: str) -> str:
     """
     return (
         f"CASE TRIM({column_name}) "
-        "WHEN '글루어트' THEN '글루코핏' "
-        "WHEN '무화당' THEN '닥다몰' "
+        "WHEN '랜식' THEN '랜식(글핏몰)' "
+        "WHEN '글핏몰' THEN '랜식(글핏몰)' "
+        "WHEN '글루코핏' THEN '랜식(글핏몰)' "
+        "WHEN '글루어트' THEN '랜식(글핏몰)' "
+        "WHEN '닥다몰' THEN '닥터다이어리(닥다몰)' "
+        "WHEN '무화당' THEN '닥터다이어리(무화당)' "
         f"ELSE TRIM({column_name}) END"
     )
 
