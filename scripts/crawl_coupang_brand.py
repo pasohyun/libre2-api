@@ -15,7 +15,7 @@ from typing import List, Dict, Any
 from playwright.sync_api import sync_playwright
 
 import config
-from scripts.crawl_naver import save_to_db, analyze_product
+from scripts.crawl_naver import save_to_db, analyze_product, NON_LIBRE_CGM_EXCLUDE_PATTERNS
 
 # 브랜드 스토어 목록
 # - min_price: 이 금액 미만 상품 제외 (0이면 필터 없음)
@@ -248,6 +248,12 @@ def run_crawling():
             # 상품명 필터 (정규식, 대소문자 무시)
             if name_filter and not re.search(name_filter, product_name, re.IGNORECASE):
                 skipped += 1
+                continue
+
+            # 덱스콤 G7 등 비대상 CGM 제품 제외
+            if any(re.search(pat, product_name, re.IGNORECASE) for pat in NON_LIBRE_CGM_EXCLUDE_PATTERNS):
+                skipped += 1
+                print(f"  [SKIP] 비대상 CGM 제외: {product_name[:40]}")
                 continue
 
             # 최소 가격 필터
