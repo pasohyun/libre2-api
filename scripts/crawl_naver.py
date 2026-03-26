@@ -227,7 +227,7 @@ def analyze_product(title, total_price):
         qty_candidates = []
 
         matches = re.findall(
-            r"[\s](\d+)\s*(개|개입|세트|팩|박스|ea|set)",
+            r"[\s](\d+)\s*(개입|세트|팩|박스|ea|set|개(?!\s*[인용]))",
             text,
             re.IGNORECASE,
         )

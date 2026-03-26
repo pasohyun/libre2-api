@@ -950,3 +950,75 @@ START COUPANG BRAND STORE: 2026-03-26T03:00:25
    MYSQLDATABASE: railway
    DB_HOST: interchange.proxy.rlwy.net
 ✅ Railway MySQL 환경 변수 사용: interchange.proxy.rlwy.net:43937
+DB inserted: 23
+총 크롤링: 23개, DB 저장: 23개
+END: 2026-03-26T03:01:05
+START COUPANG BRAND STORE: 2026-03-26T12:00:27
+[BRAND] 크롤링: https://shop.coupang.com/pillyze/?platform=p
+  페이지: 쿠팡이 추천하는 주식회사 필라이즈 관련 혜택과 특가
+  추출: 9개
+  [OK] [공식판매처] 프리스타일 리브레2 연속혈당측정기 무채혈 2개+필라이즈 패치4매 + 필라이즈
+       total=180,000 qty=2 unit=90,000 (텍스트분석)
+  [OK] 180,000원 (1개당 90,000원)
+       total=180,000 qty=1 unit=180,000 (텍스트분석)
+  [OK] [공식판매처] 프리스타일 리브레2 연속혈당측정기 무채혈 1개+패치2매 무료 + 혈당 멤버십
+       total=89,000 qty=1 unit=89,000 (텍스트분석)
+  [SKIP] 9,900원 (1개입당 990원)  (9,900 < 15,000)
+  [OK] [공식판매처] 프리스타일 리브레2 연속혈당측정기 무채혈 7개+자체 제작 패치 14매+혈당 
+       total=574,000 qty=7 unit=82,000 (텍스트분석)
+  [OK] [공식판매처] 프리스타일 리브레2 연속혈당측정기 무채혈 4개+패치8매 무료 (당뇨/가정용 
+       total=359,000 qty=4 unit=89,750 (텍스트분석)
+  [OK] 프리스타일 리브레2 연속혈당측정기 + 전용 제작 패치 + 필라이즈 혈당 멤버십 슈가케어 7
+       total=360,000 qty=4 unit=90,000 (텍스트분석)
+  [OK] 프리스타일 리브레2 연속혈당측정기 + 전용 제작 패치 + 필라이즈 혈당 멤버십 슈가케어 7
+       total=90,000 qty=1 unit=90,000 (텍스트분석)
+  [OK] 프리스타일 리브레2 연속혈당측정기 + 전용 제작 패치 + 필라이즈 혈당 멤버십 슈가케어 7
+       total=180,000 qty=2 unit=90,000 (텍스트분석)
+  [필라이즈] kept=8, skipped=1 (filter: min_price=15,000)
+
+[BRAND] 크롤링: https://shop.coupang.com/glucofit/?platform=p
+  페이지: 쿠팡이 추천하는 글루코핏 관련 혜택과 특가
+  추출: 12개
+  [OK] 덱스콤 G7 개인용 체내 연속 혈당 측정 시스템 + 글루코핏 베이직 멤버십, 1개, DEX
+       total=75,000 qty=1 unit=75,000 (텍스트분석)
+  [OK] [공식] 프리스타일 리브레2 연속혈당측정기 2개 + 글루코핏 베이직 멤버십, 글루코핏 멤버
+       total=168,000 qty=2 unit=84,000 (텍스트분석)
+  [OK] [공식] 프리스타일 리브레 2개 + 글루코핏 베이직 멤버십
+       total=167,900 qty=2 unit=83,950 (텍스트분석)
+  [OK] 애보트 프리스타일 리브레2 연속 혈당측정기, FreeStyle Libre 2, 1개
+       total=95,000 qty=1 unit=95,000 (텍스트분석)
+  [OK] 프리스타일 리브레2 총 7개 + 패치 14매 알콜솜 14매 포함
+       total=569,000 qty=7 unit=81,285 (텍스트분석)
+  [OK] 프리스타일 리브레2 연속혈당측정기 2개 + 글루코핏 40일 프리미엄 멤버십, 1개
+       total=179,900 qty=2 unit=89,950 (텍스트분석)
+  [OK] [공식판매처] 프리스타일 리브레2 연속혈당측정기 무채혈 2개+패치4매 무료 (당뇨/가정용 
+       total=167,900 qty=2 unit=83,950 (텍스트분석)
+  [OK] 프리스타일 리브레 7개 + 패치 14매 알콜솜 14매 증정, 1개
+       total=630,000 qty=7 unit=90,000 (텍스트분석)
+  [OK] 애보트 프리스타일 리브레2 연속 혈당측정기, Freestyle Libre 2, 1개
+       total=90,000 qty=1 unit=90,000 (텍스트분석)
+  [OK] [공식] 프리스타일 리브레 2개 + 글루코핏 베이직 멤버십
+       total=180,000 qty=2 unit=90,000 (텍스트분석)
+  [OK] [리뷰 1만개 검증] 프리스타일 리브레2 연속혈당측정기 2개
+       total=164,600 qty=2 unit=82,300 (텍스트분석)
+  [OK] 44%
+       total=144,000 qty=1 unit=144,000 (텍스트분석)
+  [글루코핏] kept=12, skipped=0 (filter: none)
+
+[BRAND] 크롤링: https://shop.coupang.com/A00158907/?platform=p
+  페이지: 쿠팡이 추천하는 (주)닥터다이어리 관련 혜택과 특가
+  추출: 79개
+  [OK] 프리스타일 리브레2 개인용 체내 연속혈당측정시스템, 1개
+       total=90,000 qty=2 unit=45,000 (텍스트분석(범위초과))
+  [OK] NEW 프리스타일 리브레2 최신형 1개(14일분) 연속혈당측정기 무채혈 애보트 블루투스+패
+       total=90,000 qty=1 unit=90,000 (텍스트분석)
+  [OK] 프리스타일 리브레2 연속 당 측정 시스템 + 글루어트 패치 20매 (당뇨소모성재료 제공),
+       total=560,000 qty=7 unit=80,000 (텍스트분석)
+  [닥터다이어리] kept=3, skipped=76 (filter: name='리브레\s*2|libre\s*2')
+
+🔍 환경 변수 확인:
+   MYSQLHOST: interchange.proxy.rlwy.net
+   MYSQLUSER: root
+   MYSQLDATABASE: railway
+   DB_HOST: interchange.proxy.rlwy.net
+✅ Railway MySQL 환경 변수 사용: interchange.proxy.rlwy.net:43937
