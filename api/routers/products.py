@@ -115,6 +115,15 @@ _MALL_NAME_PUBLIC_TO_DB_CANDIDATES = {
     "닥터다이어리(무화당)": ("무화당",),
 }
 
+# 대시보드/채널 그래프에 고정 노출하는 주요 5개 (표준 표기명 = SQL CASE 결과와 동일)
+_MAJOR_CHART_MALLS_PUBLIC = [
+    "닥터다이어리(닥다몰)",
+    "랜식(글핏몰)",
+    "레디투힐",
+    "메디프라",
+    "필라이즈",
+]
+
 
 def _to_public_mall_name(name: str | None) -> str:
     raw = (name or "").strip()
@@ -152,6 +161,22 @@ def _mall_name_candidates(name: str | None) -> tuple[str, ...]:
         seen.add(v)
         result.append(v)
     return tuple(result)
+
+
+def _trends_mall_in_list(raw_names: list[str]) -> list[str]:
+    """
+    tracked-malls/trends의 WHERE 절은 표준화 CASE 결과와 비교한다.
+    mall_list에 DB 원시 mall_name(예: 닥다몰)을 넣으면 표준명(닥터다이어리(닥다몰))과
+    매칭되지 않아 해당 판매처 데이터가 통째로 빠진다. 항상 공개 표준명으로 변환한다.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in raw_names:
+        pm = _to_public_mall_name((m or "").strip())
+        if pm and pm not in seen:
+            seen.add(pm)
+            out.append(pm)
+    return out
 
 
 def _mall_name_std_sql(column_name: str) -> str:
@@ -664,10 +689,15 @@ def get_tracked_malls_trends(
         """), {**channel_params}).fetchall()
         mall_list = [row[0] for row in top_malls]
 
-    if not mall_list:
-        return {"days": days, "malls": [], "data": []}
-
     try:
+        mall_list_pub = _trends_mall_in_list(mall_list or [])
+        if channel in ("naver", "coupang"):
+            for name in _MAJOR_CHART_MALLS_PUBLIC:
+                if name not in mall_list_pub:
+                    mall_list_pub.append(name)
+        if not mall_list_pub:
+            return {"days": days, "malls": [], "data": []}
+
         mall_name_std_expr = _mall_name_std_sql("mall_name")
 
         rows = db.execute(text(f"""
@@ -681,7 +711,7 @@ def get_tracked_malls_trends(
               {channel_filter_sql}
             GROUP BY DATE(created_at), {mall_name_std_expr}
             ORDER BY date ASC
-        """), {"mall_list": tuple(mall_list), "days": days, **channel_params}).fetchall()
+        """), {"mall_list": tuple(mall_list_pub), "days": days, **channel_params}).fetchall()
 
         date_data = {}
         for row in rows:
@@ -696,13 +726,7 @@ def get_tracked_malls_trends(
                 date_data[date_str][mall_name] = row[2]
 
         trend_data = list(date_data.values())
-        public_malls = []
-        seen_public = set()
-        for m in mall_list:
-            pm = _to_public_mall_name(m)
-            if pm and pm not in seen_public:
-                seen_public.add(pm)
-                public_malls.append(pm)
+        public_malls = list(mall_list_pub)
 
         return {
             "days": days,
