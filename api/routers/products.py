@@ -751,39 +751,29 @@ def get_mall_timeline(
             ORDER BY COALESCE(p.snapshot_at, p.created_at) DESC
         """), params).fetchall()
 
-        # snapshot_id 또는 시간대(hour)별로 그룹핑하여 최저가 1건
-        slot_best = {}
+        # 모든 크롤링 상품을 개별 항목으로 반환
+        timeline_items = []
         for row in rows:
             ts_raw = row[9]
-            snap_id = row[10]
             captured_at_kst = _to_kst(ts_raw) if hasattr(ts_raw, "strftime") else None
             date_key = captured_at_kst.strftime("%Y-%m-%d") if captured_at_kst else str(ts_raw)[:10]
-            hour_key = captured_at_kst.strftime("%H") if captured_at_kst else str(ts_raw)[11:13]
+            signed_card = _to_display_image_url(row[7])
+            timeline_items.append({
+                "id": row[1],
+                "capturedAt": captured_at_kst.strftime("%Y-%m-%d %H:%M") if captured_at_kst else str(ts_raw),
+                "date": date_key,
+                "time": captured_at_kst.strftime("%H:%M") if captured_at_kst else str(ts_raw)[11:16],
+                "productName": row[0],
+                "unitPrice": row[2],
+                "pack": row[3],
+                "price": row[4],
+                "url": row[5] or "#",
+                "captureThumb": row[6] or "",
+                "cardImagePath": signed_card or "",
+                "calcMethod": row[8],
+            })
 
-            if snap_id:
-                slot_key = f"{date_key}_{snap_id}"
-            else:
-                slot_key = f"{date_key}_{hour_key}"
-
-            unit_price = row[2]
-            if slot_key not in slot_best or unit_price < slot_best[slot_key]["unitPrice"]:
-                signed_card = _to_display_image_url(row[7])
-                slot_best[slot_key] = {
-                    "id": row[1],
-                    "capturedAt": captured_at_kst.strftime("%Y-%m-%d %H:%M") if captured_at_kst else str(ts_raw),
-                    "date": date_key,
-                    "time": captured_at_kst.strftime("%H:%M") if captured_at_kst else str(ts_raw)[11:16],
-                    "productName": row[0],
-                    "unitPrice": row[2],
-                    "pack": row[3],
-                    "price": row[4],
-                    "url": row[5] or "#",
-                    "captureThumb": row[6] or "",
-                    "cardImagePath": signed_card or "",
-                    "calcMethod": row[8],
-                }
-
-        timeline = sorted(slot_best.values(), key=lambda x: x["capturedAt"], reverse=True)
+        timeline = sorted(timeline_items, key=lambda x: x["capturedAt"], reverse=True)
 
         return {
             "mall_name": _to_public_mall_name(mall_name),
