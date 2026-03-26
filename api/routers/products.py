@@ -1,5 +1,5 @@
 # api/routers/products.py
-from fastapi import APIRouter, Query, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Query, Depends, HTTPException, BackgroundTasks, Body
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from api.database import SessionLocal
@@ -526,9 +526,22 @@ def get_tracked_malls_summary(
     """
     # 채널 필터 SQL 조건 생성
     channel_filter_sql = ""
+    channel_filter_sql_plain = ""
+    channel_where_plain = ""
     channel_params = {}
     if channel:
-        channel_filter_sql = " AND p.channel = :channel"
+        channel_filter_sql = (
+            " AND (p.channel = :channel "
+            "OR (:channel = 'naver' AND (p.channel IS NULL OR TRIM(p.channel) = '')))"
+        )
+        channel_filter_sql_plain = (
+            " AND (channel = :channel "
+            "OR (:channel = 'naver' AND (channel IS NULL OR TRIM(channel) = '')))"
+        )
+        channel_where_plain = (
+            "WHERE (channel = :channel "
+            "OR (:channel = 'naver' AND (channel IS NULL OR TRIM(channel) = '')))"
+        )
         channel_params["channel"] = channel
 
     if malls:
@@ -542,6 +555,8 @@ def get_tracked_malls_summary(
             SELECT {mall_name_std_expr} AS mall_name
             FROM products
             WHERE channel = :channel
+               OR channel IS NULL
+               OR TRIM(channel) = ''
             GROUP BY {mall_name_std_expr}
             ORDER BY COUNT(*) DESC, MIN(unit_price) ASC
         """), {"channel": channel}).fetchall()
@@ -551,7 +566,7 @@ def get_tracked_malls_summary(
             WITH latest AS (
                 SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
                 FROM products
-                {"WHERE channel = :channel" if channel else ""}
+                {channel_where_plain if channel else ""}
                 ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
                 LIMIT 1
             )
@@ -657,9 +672,22 @@ def get_tracked_malls_trends(
     """
     # 채널 필터 SQL 조건 생성
     channel_filter_sql = ""
+    channel_filter_sql_plain = ""
+    channel_where_plain = ""
     channel_params = {}
     if channel:
-        channel_filter_sql = " AND channel = :channel"
+        channel_filter_sql = (
+            " AND (channel = :channel "
+            "OR (:channel = 'naver' AND (channel IS NULL OR TRIM(channel) = '')))"
+        )
+        channel_filter_sql_plain = (
+            " AND (p.channel = :channel "
+            "OR (:channel = 'naver' AND (p.channel IS NULL OR TRIM(p.channel) = '')))"
+        )
+        channel_where_plain = (
+            "WHERE (channel = :channel "
+            "OR (:channel = 'naver' AND (channel IS NULL OR TRIM(channel) = '')))"
+        )
         channel_params["channel"] = channel
 
     if malls:
@@ -671,7 +699,7 @@ def get_tracked_malls_trends(
             WITH latest AS (
                 SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
                 FROM products
-                {"WHERE channel = :channel" if channel else ""}
+                {channel_where_plain if channel else ""}
                 ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
                 LIMIT 1
             )
@@ -682,7 +710,7 @@ def get_tracked_malls_trends(
                 (l.snapshot_id IS NOT NULL AND p.snapshot_id = l.snapshot_id)
                 OR (l.snapshot_id IS NULL AND COALESCE(p.snapshot_at, p.created_at) = l.snapshot_time)
             )
-            {channel_filter_sql.replace("channel", "p.channel") if channel else ""}
+            {channel_filter_sql_plain if channel else ""}
             GROUP BY mall_name
             ORDER BY MIN(unit_price) ASC
             LIMIT 10
@@ -755,7 +783,10 @@ def get_mall_timeline(
         channel_filter_sql = ""
         params = {"mall_name_list": db_mall_name_list, "days": days}
         if channel:
-            channel_filter_sql = " AND p.channel = :channel"
+            channel_filter_sql = (
+                " AND (p.channel = :channel "
+                "OR (:channel = 'naver' AND (p.channel IS NULL OR TRIM(p.channel) = '')))"
+            )
             params["channel"] = channel
         rows = db.execute(text(f"""
             SELECT
@@ -984,3 +1015,46 @@ def manual_confirm_quantity(
         "unit_price": new_unit_price,
         "calc_method": "수동확인(완료)",
     }
+
+
+@router.post("/delete")
+def delete_products(
+    product_ids: list[int] = Body(..., embed=True, description="삭제할 products.id 목록"),
+    db: Session = Depends(get_db),
+):
+    """
+    선택한 상품 행을 DB에서 삭제한다. (메인 대시보드 일괄 삭제용)
+    """
+    ids = [int(x) for x in (product_ids or []) if int(x) > 0]
+    # 순서 유지 dedupe
+    deduped_ids: list[int] = []
+    seen = set()
+    for pid in ids:
+        if pid in seen:
+            continue
+        seen.add(pid)
+        deduped_ids.append(pid)
+
+    if not deduped_ids:
+        raise HTTPException(status_code=400, detail="product_ids is empty")
+    if len(deduped_ids) > 500:
+        raise HTTPException(status_code=400, detail="Too many ids. Max 500 per request")
+
+    try:
+        result = db.execute(
+            text("DELETE FROM products WHERE id IN :id_list"),
+            {"id_list": tuple(deduped_ids)},
+        )
+        db.commit()
+        deleted_count = int(result.rowcount or 0)
+        return {
+            "deleted": True,
+            "deleted_count": deleted_count,
+            "requested_count": len(deduped_ids),
+            "product_ids": deduped_ids,
+        }
+    except Exception as e:
+        import traceback
+        db.rollback()
+        print(f"Error in delete_products: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
