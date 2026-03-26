@@ -168,8 +168,8 @@ def compute_below_threshold_detail(
     start, end = _date_range(start_date, end_date)
     rows = _fetch_products(db, start, end, channel)
 
-    # per seller+bucket keep the lowest-price record
-    by_seller: Dict[str, Dict[str, Dict]] = defaultdict(dict)
+    # 기준가 이하인 모든 상품을 셀러별로 수집
+    by_seller: Dict[str, List[Dict]] = defaultdict(list)
     for r in rows:
         if int(r.get("calc_valid") or 1) != 1:
             continue
@@ -177,28 +177,23 @@ def compute_below_threshold_detail(
         if price > threshold_price:
             continue
         seller = (r["mall_name"] or "").strip() or "(unknown)"
-        bucket = _snapshot_bucket(
-            r.get("snapshot_id"), r.get("snapshot_at"), r.get("created_at"),
-        )
-        cur = by_seller[seller].get(bucket)
-        if cur is None or price < cur["unit_price"]:
-            by_seller[seller][bucket] = {
-                "seller_name": seller,
-                "platform": r.get("channel") or channel,
-                "unit_price": price,
-                "total_price": int(r.get("total_price") or 0),
-                "quantity": int(r.get("quantity") or 0),
-                "time": r["ts"],
-                "link": r.get("link"),
-                "image_url": r.get("image_url"),
-                "product_name": r.get("product_name"),
-                "calc_method": r.get("calc_method"),
-                "card_image_path": r.get("card_image_path"),
-            }
+        by_seller[seller].append({
+            "seller_name": seller,
+            "platform": r.get("channel") or channel,
+            "unit_price": price,
+            "total_price": int(r.get("total_price") or 0),
+            "quantity": int(r.get("quantity") or 0),
+            "time": r["ts"],
+            "link": r.get("link"),
+            "image_url": r.get("image_url"),
+            "product_name": r.get("product_name"),
+            "calc_method": r.get("calc_method"),
+            "card_image_path": r.get("card_image_path"),
+        })
 
     result: List[Dict[str, Any]] = []
-    for seller, buckets in by_seller.items():
-        all_snapshots = sorted(buckets.values(), key=lambda x: (x["time"], x["unit_price"]))
+    for seller, items in by_seller.items():
+        all_snapshots = sorted(items, key=lambda x: (x["time"], x["unit_price"]))
         # seller-level min
         min_item = min(all_snapshots, key=lambda x: (x["unit_price"], x["time"]))
         result.append({
