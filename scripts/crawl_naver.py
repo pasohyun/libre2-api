@@ -300,6 +300,22 @@ def _is_coupang_item(link: str, mall_name: str) -> bool:
     return ("coupang.com" in link_text) or (mall_text == "쿠팡")
 
 
+def _is_allowed_coupang_libre2_title(title: str) -> bool:
+    """
+    네이버 OpenAPI 결과 중 쿠팡 채널로 분류된 항목은
+    아래 핵심 타이틀 패턴만 허용한다.
+    - "애보트 프리스타일 리브레2 연속 혈당측정기 FreeStyle Libre 2 n개"
+    """
+    text = re.sub(r"\s+", " ", (title or "").strip())
+    if not text:
+        return False
+
+    has_core_ko = "애보트 프리스타일 리브레2 연속 혈당측정기" in text
+    has_core_en = re.search(r"freestyle\s*libre\s*2", text, re.IGNORECASE) is not None
+    has_qty = re.search(r"\b\d+\s*개\b", text) is not None
+    return has_core_ko and has_core_en and has_qty
+
+
 def _decode_json_escaped_text(value: str) -> str:
     raw = (value or "").strip()
     if not raw:
@@ -435,6 +451,7 @@ def get_naver_data_all(query):
             excluded_by_category = 0
             excluded_by_accessory = 0
             excluded_by_non_target = 0
+            excluded_by_coupang_title = 0
 
             for item in items:
                 title = item.get("title", "").replace("<b>", "").replace("</b>", "")
@@ -455,6 +472,11 @@ def get_naver_data_all(query):
 
                 is_coupang = _is_coupang_item(link, mall)
                 if is_coupang:
+                    if not _is_allowed_coupang_libre2_title(title):
+                        excluded_by_coupang_title += 1
+                        if VERBOSE_EXCLUDE_LOG:
+                            _log(f"  ⛔ 제외 (쿠팡 타이틀 패턴 불일치): {title[:70]}...")
+                        continue
                     channel = "coupang"
                     market = "마켓플레이스"
 
@@ -541,6 +563,7 @@ def get_naver_data_all(query):
                 "page start="
                 f"{start} fetched={len(items)} kept={kept_now - kept_before} "
                 f"excluded_non_target={excluded_by_non_target} "
+                f"excluded_coupang_title={excluded_by_coupang_title} "
                 f"excluded_category={excluded_by_category} "
                 f"excluded_accessory={excluded_by_accessory} "
                 f"kept_total={kept_now}"
