@@ -32,13 +32,14 @@ def get_monthly_report(
     store: bool = Query(False, description="Store metrics/report into DB"),
     db: Session = Depends(get_db),
 ):
+    plats = ["naver", "coupang"] if channel == "all" else [channel]
     report = build_monthly_report(
         db,
         month=month,
         threshold_price=threshold_price,
         channel=channel,
         crawl_schedule=crawl_schedule,
-        platforms=[channel],
+        platforms=plats,
         top_cards=top_cards,
         use_llm=use_llm,
         store=store,
@@ -57,13 +58,14 @@ def get_monthly_report_markdown(
     store: bool = Query(False),
     db: Session = Depends(get_db),
 ):
+    plats = ["naver", "coupang"] if channel == "all" else [channel]
     report = build_monthly_report(
         db,
         month=month,
         threshold_price=threshold_price,
         channel=channel,
         crawl_schedule=crawl_schedule,
-        platforms=[channel],
+        platforms=plats,
         top_cards=top_cards,
         use_llm=use_llm,
         store=store,
