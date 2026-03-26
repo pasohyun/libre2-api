@@ -29,10 +29,17 @@ def _snapshot_bucket(
 def _fetch_products(
     db: Session, start: str, end: str, channel: str,
 ) -> list:
+    if channel == "all":
+        channel_filter = ""
+        params = {"start": start, "end": end}
+    else:
+        channel_filter = "AND channel = :channel"
+        params = {"start": start, "end": end, "channel": channel}
+
     return (
         db.execute(
             text(
-                """
+                f"""
                 SELECT
                     product_name,
                     mall_name,
@@ -43,6 +50,7 @@ def _fetch_products(
                     image_url,
                     card_image_path,
                     calc_method,
+                    channel,
                     COALESCE(snapshot_at, created_at) AS ts,
                     snapshot_id,
                     snapshot_at,
@@ -51,10 +59,10 @@ def _fetch_products(
                 FROM products
                 WHERE COALESCE(snapshot_at, created_at) >= :start
                   AND COALESCE(snapshot_at, created_at) <= :end
-                  AND channel = :channel
+                  {channel_filter}
                 """
             ),
-            {"start": start, "end": end, "channel": channel},
+            params,
         )
         .mappings()
         .all()
@@ -176,7 +184,7 @@ def compute_below_threshold_detail(
         if cur is None or price < cur["unit_price"]:
             by_seller[seller][bucket] = {
                 "seller_name": seller,
-                "platform": channel,
+                "platform": r.get("channel") or channel,
                 "unit_price": price,
                 "total_price": int(r.get("total_price") or 0),
                 "quantity": int(r.get("quantity") or 0),
