@@ -211,7 +211,103 @@ def _fixed_quantity_for_product_link(link: str):
     return None
 
 
-def analyze_product(title, total_price, link=None):
+def _canonical_product_link_key(link: str) -> str:
+    """동일 상품 URL 매칭용(호스트 소문자·www 제거·쿼리 정렬)."""
+    if not (link or "").strip():
+        return ""
+    raw = urllib.parse.urldefrag(link.strip())[0].strip()
+    try:
+        u = urllib.parse.urlparse(raw)
+        scheme = (u.scheme or "https").lower()
+        netloc = (u.netloc or "").lower()
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+        path = u.path or ""
+        pairs = urllib.parse.parse_qsl(u.query, keep_blank_values=True)
+        pairs.sort(key=lambda x: (x[0].lower(), x[1]))
+        query = urllib.parse.urlencode(pairs)
+        return urllib.parse.urlunsplit((scheme, netloc, path, query, ""))
+    except Exception:
+        return raw
+
+
+def load_confirmed_qty_by_link_map():
+    """
+    대시보드에서 수량확정(수동)한 이력이 있는 link → quantity.
+    가장 최근 id 기준. 다음 크롤에서 동일 링크면 제목 파싱 대신 이 수량을 쓴다.
+    """
+    import os
+    import time
+
+    if os.getenv("MYSQLHOST"):
+        db_host = os.getenv("MYSQLHOST")
+        db_user = os.getenv("MYSQLUSER")
+        db_password = os.getenv("MYSQLPASSWORD")
+        db_name = os.getenv("MYSQLDATABASE")
+        db_port = int(os.getenv("MYSQLPORT", 3306))
+    elif config.DB_HOST:
+        db_host = config.DB_HOST
+        db_user = config.DB_USER
+        db_password = config.DB_PASSWORD
+        db_name = config.DB_NAME
+        db_port = config.DB_PORT
+    else:
+        return {}
+
+    conn = None
+    for attempt in range(1, 4):
+        try:
+            conn = mysql.connector.connect(
+                host=db_host,
+                port=db_port,
+                user=db_user,
+                password=db_password,
+                database=db_name,
+                charset="utf8mb4",
+                connection_timeout=10,
+            )
+            break
+        except Exception as e:
+            if attempt >= 3:
+                _log(f"⚠️ 수동확정 수량 맵 로드용 DB 연결 실패: {e}")
+            else:
+                time.sleep(attempt)
+
+    if not conn:
+        return {}
+
+    out = {}
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            SELECT link, quantity FROM {config.DB_TABLE}
+            WHERE calc_method LIKE %s
+              AND link IS NOT NULL AND TRIM(link) <> ''
+            ORDER BY id DESC
+            """,
+            ("수동확인(완료)%",),
+        )
+        for link, qty in cur.fetchall():
+            if not link:
+                continue
+            key = _canonical_product_link_key(link)
+            if not key or key in out:
+                continue
+            q = int(qty or 0)
+            if q > 0:
+                out[key] = q
+        cur.close()
+    except Exception as e:
+        _log(f"⚠️ 수동확정 수량 맵 조회 실패(무시): {e}")
+        out = {}
+    finally:
+        conn.close()
+
+    return out
+
+
+def analyze_product(title, total_price, link=None, confirmed_qty_by_link=None):
     """
     상품명에서 센서 수량과 단가를 분석
 
@@ -221,6 +317,18 @@ def analyze_product(title, total_price, link=None):
     if fixed_qty is not None and fixed_qty > 0:
         calc_unit_price = total_price // fixed_qty
         return fixed_qty, calc_unit_price, f"링크별수량고정({fixed_qty}개)"
+
+    if confirmed_qty_by_link:
+        lk = (link or "").strip()
+        if lk:
+            cq = confirmed_qty_by_link.get(_canonical_product_link_key(lk))
+            if cq is None:
+                cq = confirmed_qty_by_link.get(lk)
+            if cq is not None:
+                q = int(cq)
+                if q > 0:
+                    calc_unit_price = total_price // q
+                    return q, calc_unit_price, "수동확인(완료·링크재사용)"
 
     clean_title = title
 
@@ -445,7 +553,7 @@ def _can_fetch_coupang_seller(fetch_count: int) -> bool:
     return fetch_count < COUPANG_SELLER_MAX_FETCH_PER_RUN
 
 
-def get_naver_data_all(query):
+def get_naver_data_all(query, confirmed_qty_by_link=None):
     enc = urllib.parse.quote(query)
     all_results = []
     start = 1
@@ -581,7 +689,9 @@ def get_naver_data_all(query):
                             _log(f"  ⛔ 제외 (액세서리): {title[:50]}...")
                         continue
 
-                qty, unit_price, method = analyze_product(title, total_price, link)
+                qty, unit_price, method = analyze_product(
+                    title, total_price, link, confirmed_qty_by_link
+                )
 
                 if method in MANUAL_QUANTITY_PENDING_METHODS:
                     excluded_by_qty_pending += 1
@@ -643,6 +753,8 @@ def get_naver_data_all(query):
 # ✅ (1) calc_valid 함수 추가
 def _calc_valid(calc_method: str) -> int:
     cm = (calc_method or "").strip()
+    if cm.startswith("수동확인(완료"):
+        return 1
     if "확인" in cm or "범위초과" in cm:
         return 0
     return 1
@@ -915,7 +1027,11 @@ def run_crawling():
     _log(f"START: {crawl_started_at.isoformat(timespec='seconds')}")
     keyword = config.SEARCH_KEYWORD
 
-    rows = get_naver_data_all(keyword)
+    confirmed_map = load_confirmed_qty_by_link_map()
+    if confirmed_map:
+        _log(f"수동확정 수량 재사용 맵: {len(confirmed_map)}개 링크")
+
+    rows = get_naver_data_all(keyword, confirmed_qty_by_link=confirmed_map)
     _log(f"Fetched: {len(rows)} rows")
 
     # 실행 단위 snapshot_id/snapshot_at (초 단위 + UUID)로 고정해 run 간 혼합 방지
