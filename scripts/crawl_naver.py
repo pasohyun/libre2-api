@@ -184,12 +184,44 @@ def _upload_product_images_to_s3(rows, *, snapshot_id: str):
     return uploaded
 
 
-def analyze_product(title, total_price):
+def _fixed_quantity_for_product_link(link: str):
+    """
+    상품명 파싱이 반복 오판하는 특정 URL은 수량을 고정한다.
+    (예: 옥션/지마켓 일부 상품이 사은품 문구 때문에 3개로 잡히는 경우)
+    """
+    if not (link or "").strip():
+        return None
+    try:
+        u = urllib.parse.urlparse(link.strip())
+        host = (u.netloc or "").lower()
+        raw_qs = urllib.parse.parse_qs(u.query, keep_blank_values=True)
+        q = {k.lower(): v for k, v in raw_qs.items()}
+
+        if "auction.co.kr" in host:
+            for v in q.get("itemno") or []:
+                if str(v).strip().upper() == "F208273220":
+                    return 2
+
+        if "gmarket.co.kr" in host:
+            for v in q.get("goodscode") or []:
+                if str(v).strip() == "4407378380":
+                    return 2
+    except Exception:
+        return None
+    return None
+
+
+def analyze_product(title, total_price, link=None):
     """
     상품명에서 센서 수량과 단가를 분석
 
     핵심: 센서/측정기 수량만 추출, 사은품(패치, 알콜솜 등)은 무시
     """
+    fixed_qty = _fixed_quantity_for_product_link(link or "")
+    if fixed_qty is not None and fixed_qty > 0:
+        calc_unit_price = total_price // fixed_qty
+        return fixed_qty, calc_unit_price, f"링크별수량고정({fixed_qty}개)"
+
     clean_title = title
 
     # 1. 사은품/증정품 관련 구문 전체 제거
@@ -549,7 +581,7 @@ def get_naver_data_all(query):
                             _log(f"  ⛔ 제외 (액세서리): {title[:50]}...")
                         continue
 
-                qty, unit_price, method = analyze_product(title, total_price)
+                qty, unit_price, method = analyze_product(title, total_price, link)
 
                 if method in MANUAL_QUANTITY_PENDING_METHODS:
                     excluded_by_qty_pending += 1

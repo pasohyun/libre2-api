@@ -262,7 +262,9 @@ def run_crawling():
                 print(f"  [SKIP] {product_name[:40]}  ({total_price:,} < {min_price:,})")
                 continue
 
-            qty, unit_price, how = analyze_product(product_name, total_price)
+            qty, unit_price, how = analyze_product(
+                product_name, total_price, p.get("link") or "",
+            )
 
             row = {
                 "keyword": BRAND_KEYWORD,
