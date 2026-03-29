@@ -63,6 +63,16 @@ NON_LIBRE_CGM_EXCLUDE_PATTERNS = [
     r"케어센스\s*에어",
 ]
 
+# 대시보드에서 수량확정(수동) 대상과 동일. DB에는 넣지 않으며 save_to_db 시 기존 동일 행도 삭제한다.
+MANUAL_QUANTITY_PENDING_METHODS = frozenset(
+    ("확인필요", "가격역산(보정)", "텍스트분석(범위초과)"),
+)
+_MANUAL_QUANTITY_PENDING_METHODS_SQL = (
+    "확인필요",
+    "가격역산(보정)",
+    "텍스트분석(범위초과)",
+)
+
 
 def _log(message: str):
     # Cron 환경에서 출력 버퍼링으로 로그가 늦게 보이는 문제를 줄인다.
@@ -452,6 +462,7 @@ def get_naver_data_all(query):
             excluded_by_accessory = 0
             excluded_by_non_target = 0
             excluded_by_coupang_title = 0
+            excluded_by_qty_pending = 0
 
             for item in items:
                 title = item.get("title", "").replace("<b>", "").replace("</b>", "")
@@ -540,6 +551,14 @@ def get_naver_data_all(query):
 
                 qty, unit_price, method = analyze_product(title, total_price)
 
+                if method in MANUAL_QUANTITY_PENDING_METHODS:
+                    excluded_by_qty_pending += 1
+                    if VERBOSE_EXCLUDE_LOG:
+                        _log(
+                            f"  ⛔ 제외 (수량 미확정·DB 미저장): {method} | {title[:50]}..."
+                        )
+                    continue
+
                 if unit_price < 65000:
                     continue
 
@@ -566,6 +585,7 @@ def get_naver_data_all(query):
                 f"excluded_coupang_title={excluded_by_coupang_title} "
                 f"excluded_category={excluded_by_category} "
                 f"excluded_accessory={excluded_by_accessory} "
+                f"excluded_qty_pending={excluded_by_qty_pending} "
                 f"kept_total={kept_now}"
             )
 
@@ -663,6 +683,22 @@ def save_to_db(rows, *, snapshot_id: str, snapshot_at: datetime):
         return 0
     cur = conn.cursor()
 
+    try:
+        cur.execute(
+            f"DELETE FROM {config.DB_TABLE} WHERE calc_method IN (%s, %s, %s)",
+            _MANUAL_QUANTITY_PENDING_METHODS_SQL,
+        )
+        purged = cur.rowcount
+        conn.commit()
+        if purged:
+            _log(f"🗑️ 수량 미확정(calc_method) 행 DB 삭제: {purged}건")
+    except Exception as e:
+        _log(f"⚠️ 수량 미확정 행 삭제 실패(이번 저장은 중단): {e}")
+        conn.rollback()
+        cur.close()
+        conn.close()
+        return 0
+
     sql = f"""
     INSERT INTO {config.DB_TABLE} (
       keyword, product_name, unit_price, quantity, total_price,
@@ -686,7 +722,12 @@ def save_to_db(rows, *, snapshot_id: str, snapshot_at: datetime):
         return 0
 
     data = []
+    skipped_pending = 0
     for r in rows:
+        cm = (r.get("calc_method") or "").strip()
+        if cm in MANUAL_QUANTITY_PENDING_METHODS:
+            skipped_pending += 1
+            continue
         data.append(
             (
                 r["keyword"],
@@ -706,6 +747,14 @@ def save_to_db(rows, *, snapshot_id: str, snapshot_at: datetime):
                 _calc_valid(r.get("calc_method")),
             )
         )
+    if skipped_pending:
+        _log(f"⏭️ INSERT 생략(수량 미확정 calc_method): {skipped_pending}건")
+
+    if not data:
+        _log("No rows to insert after excluding 수량 미확정.")
+        cur.close()
+        conn.close()
+        return 0
 
     cur.executemany(sql, data)
     inserted = cur.rowcount
