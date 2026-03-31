@@ -406,7 +406,7 @@ def export_raw_products_excel(
         rows = (
             db.execute(
                 text(
-                    """
+                    f"""
                     SELECT
                         id,
                         keyword,
