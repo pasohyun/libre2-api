@@ -23,6 +23,7 @@ playwright
 beautifulsoup4
 lxml
 pandas  # crawl_naver.py에서 import (현재 미사용이지만 호환성을 위해 유지)
+openpyxl  # products 원본 엑셀보내기
 
 # -----------------------
 # Time / Scheduling

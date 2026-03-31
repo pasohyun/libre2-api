@@ -1,10 +1,14 @@
 # api/routers/products.py
 from fastapi import APIRouter, Query, Depends, HTTPException, BackgroundTasks, Body
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from api.database import SessionLocal
 from api.schemas import ProductListResponse
 from datetime import datetime, timedelta
+import io
+
+import pandas as pd
 from zoneinfo import ZoneInfo
 import threading
 import os
@@ -321,6 +325,83 @@ def get_today_products(db: Session = Depends(get_db)):
         error_detail = f"Database error: {str(e)}\n{traceback.format_exc()}"
         print(f"Error in get_today_products: {error_detail}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@router.get("/export/raw")
+def export_raw_products_excel(
+    date: str = Query(..., description="KST 기준 일자 (YYYY-MM-DD)"),
+    db: Session = Depends(get_db),
+):
+    """
+    지정한 KST 하루(00:00~24:00)에 DB에 쌓인 products 원본 행을 엑셀(.xlsx)로 내려준다.
+    시각 기준은 COALESCE(snapshot_at, created_at) (오늘 목록 / 리포트와 동일).
+    """
+    raw = (date or "").strip()
+    try:
+        y, m, d = (int(x) for x in raw.split("-"))
+        day_start_kst = datetime(y, m, d, tzinfo=KST)
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="date must be YYYY-MM-DD",
+        ) from None
+
+    day_end_kst = day_start_kst + timedelta(days=1)
+    day_start = day_start_kst.replace(tzinfo=None)
+    day_end = day_end_kst.replace(tzinfo=None)
+
+    try:
+        rows = (
+            db.execute(
+                text(
+                    """
+                    SELECT
+                        id,
+                        keyword,
+                        product_name,
+                        unit_price,
+                        quantity,
+                        total_price,
+                        mall_name,
+                        calc_method,
+                        link,
+                        image_url,
+                        card_image_path,
+                        channel,
+                        market,
+                        snapshot_id,
+                        snapshot_at,
+                        calc_valid,
+                        created_at
+                    FROM products
+                    WHERE COALESCE(snapshot_at, created_at) >= :day_start
+                      AND COALESCE(snapshot_at, created_at) < :day_end
+                    ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
+                    """
+                ),
+                {"day_start": day_start, "day_end": day_end},
+            )
+            .mappings()
+            .all()
+        )
+        df = pd.DataFrame([dict(r) for r in rows])
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="products")
+        buf.seek(0)
+        filename = f"products_raw_{raw}.xlsx"
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+    except Exception as e:
+        import traceback
+
+        print(f"Error in export_raw_products_excel: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Export error: {str(e)}") from e
 
 
 @router.get("/lowest")
