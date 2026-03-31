@@ -329,26 +329,78 @@ def get_today_products(db: Session = Depends(get_db)):
 
 @router.get("/export/raw")
 def export_raw_products_excel(
-    date: str = Query(..., description="KST 기준 일자 (YYYY-MM-DD)"),
+    date: str | None = Query(None, description="단일 일자 (YYYY-MM-DD). start_date/end_date 미지정 시 사용"),
+    start_date: str | None = Query(None, description="시작 일자 (YYYY-MM-DD, KST)"),
+    end_date: str | None = Query(None, description="종료 일자 (YYYY-MM-DD, KST, 포함)"),
+    channel: str = Query("all", description="채널 필터 (all, naver, coupang, others)"),
+    header_kr: bool = Query(True, description="엑셀 헤더 한글 라벨 변환 여부"),
     db: Session = Depends(get_db),
 ):
     """
-    지정한 KST 하루(00:00~24:00)에 DB에 쌓인 products 원본 행을 엑셀(.xlsx)로 내려준다.
+    지정한 KST 기간에 DB에 쌓인 products 원본 행을 엑셀(.xlsx)로 내려준다.
+    - date: 단일 일자
+    - start_date/end_date: 기간 (end_date 포함)
     시각 기준은 COALESCE(snapshot_at, created_at) (오늘 목록 / 리포트와 동일).
     """
-    raw = (date or "").strip()
-    try:
-        y, m, d = (int(x) for x in raw.split("-"))
-        day_start_kst = datetime(y, m, d, tzinfo=KST)
-    except Exception:
+    def _parse_ymd(value: str, name: str) -> datetime:
+        v = (value or "").strip()
+        try:
+            y, m, d = (int(x) for x in v.split("-"))
+            return datetime(y, m, d, tzinfo=KST)
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"{name} must be YYYY-MM-DD") from None
+
+    if start_date and end_date:
+        start_kst = _parse_ymd(start_date, "start_date")
+        end_kst = _parse_ymd(end_date, "end_date")
+    elif date:
+        start_kst = _parse_ymd(date, "date")
+        end_kst = start_kst
+    else:
         raise HTTPException(
             status_code=400,
-            detail="date must be YYYY-MM-DD",
-        ) from None
+            detail="Provide either date, or start_date and end_date",
+        )
 
-    day_end_kst = day_start_kst + timedelta(days=1)
-    day_start = day_start_kst.replace(tzinfo=None)
-    day_end = day_end_kst.replace(tzinfo=None)
+    if end_kst < start_kst:
+        raise HTTPException(status_code=400, detail="end_date must be >= start_date")
+
+    day_start = start_kst.replace(tzinfo=None)
+    day_end = (end_kst + timedelta(days=1)).replace(tzinfo=None)
+
+    ch = (channel or "all").strip().lower()
+    allowed_channels = {"all", "naver", "coupang", "others"}
+    if ch not in allowed_channels:
+        raise HTTPException(status_code=400, detail="channel must be one of: all, naver, coupang, others")
+
+    channel_where = ""
+    params = {"day_start": day_start, "day_end": day_end}
+    if ch != "all":
+        if ch == "naver":
+            channel_where = " AND (channel = :channel OR channel IS NULL OR TRIM(channel) = '')"
+        else:
+            channel_where = " AND channel = :channel"
+        params["channel"] = ch
+
+    header_map_kr = {
+        "id": "ID",
+        "keyword": "키워드",
+        "product_name": "상품명",
+        "unit_price": "단가",
+        "quantity": "수량",
+        "total_price": "판매가",
+        "mall_name": "판매처",
+        "calc_method": "산출방식",
+        "link": "상품링크",
+        "image_url": "원본이미지URL",
+        "card_image_path": "카드이미지경로",
+        "channel": "채널",
+        "market": "마켓",
+        "snapshot_id": "스냅샷ID",
+        "snapshot_at": "스냅샷시각",
+        "calc_valid": "계산유효",
+        "created_at": "생성시각",
+    }
 
     try:
         rows = (
@@ -376,20 +428,25 @@ def export_raw_products_excel(
                     FROM products
                     WHERE COALESCE(snapshot_at, created_at) >= :day_start
                       AND COALESCE(snapshot_at, created_at) < :day_end
+                      {channel_where}
                     ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
                     """
                 ),
-                {"day_start": day_start, "day_end": day_end},
+                params,
             )
             .mappings()
             .all()
         )
         df = pd.DataFrame([dict(r) for r in rows])
+        if header_kr and not df.empty:
+            df = df.rename(columns=header_map_kr)
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name="products")
         buf.seek(0)
-        filename = f"products_raw_{raw}.xlsx"
+        start_str = start_kst.strftime("%Y-%m-%d")
+        end_str = end_kst.strftime("%Y-%m-%d")
+        filename = f"raw_{ch}_{start_str}_{end_str}_v1.xlsx"
         return StreamingResponse(
             buf,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
