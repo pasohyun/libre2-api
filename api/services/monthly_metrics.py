@@ -43,14 +43,22 @@ def compute_monthly_seller_metrics(
     """
     start, end = _month_range(month)
 
+    if channel == "all":
+        channel_filter = ""
+        params = {"start": start, "end": end}
+    else:
+        channel_filter = "AND channel = :channel"
+        params = {"start": start, "end": end, "channel": channel}
+
     rows = db.execute(
         text(
-            """
+            f"""
             SELECT
                 mall_name,
                 unit_price,
                 link,
                 calc_method,
+                channel,
                 COALESCE(snapshot_at, created_at) AS ts,
                 snapshot_id,
                 snapshot_at,
@@ -59,20 +67,23 @@ def compute_monthly_seller_metrics(
             FROM products
             WHERE COALESCE(snapshot_at, created_at) >= :start
               AND COALESCE(snapshot_at, created_at) < :end
-              AND channel = :channel
+              {channel_filter}
             """
         ),
-        {"start": start, "end": end, "channel": channel},
+        params,
     ).mappings().all()
 
     by_seller_bucket: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
     calc_method_counts: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    seller_channels: Dict[str, set] = defaultdict(set)
 
     for r in rows:
         seller = (r["mall_name"] or "").strip() or "(unknown)"
         ts = r["ts"]
         bucket = _snapshot_bucket(r.get("snapshot_id"), r.get("snapshot_at"), r.get("created_at"))
         calc_method_counts[seller][(r.get("calc_method") or "").strip()] += 1
+        if r.get("channel"):
+            seller_channels[seller].add(r["channel"])
 
         if int(r.get("calc_valid") or 1) != 1:
             continue
@@ -150,7 +161,7 @@ def compute_monthly_seller_metrics(
             {
                 "month": month,
                 "threshold_price": threshold_price,
-                "channel": channel,
+                "channel": "/".join(sorted(seller_channels.get(seller, {channel}))),
                 "seller_name_std": seller,
                 "observations": observations,
                 "below_threshold_count": below_cnt,

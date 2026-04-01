@@ -15,7 +15,12 @@ from typing import List, Dict, Any
 from playwright.sync_api import sync_playwright
 
 import config
-from scripts.crawl_naver import save_to_db, analyze_product
+from scripts.crawl_naver import (
+    save_to_db,
+    analyze_product,
+    NON_LIBRE_CGM_EXCLUDE_PATTERNS,
+    load_confirmed_qty_by_link_map,
+)
 
 # 브랜드 스토어 목록
 # - min_price: 이 금액 미만 상품 제외 (0이면 필터 없음)
@@ -225,6 +230,10 @@ def run_crawling():
     """메인 실행 함수."""
     print(f"START COUPANG BRAND STORE: {datetime.now().isoformat(timespec='seconds')}")
 
+    confirmed_map = load_confirmed_qty_by_link_map()
+    if confirmed_map:
+        print(f"  수동확정 수량 재사용 맵: {len(confirmed_map)}개 링크")
+
     all_rows = []
 
     for store in BRAND_STORES:
@@ -250,13 +259,24 @@ def run_crawling():
                 skipped += 1
                 continue
 
+            # 덱스콤 G7 등 비대상 CGM 제품 제외
+            if any(re.search(pat, product_name, re.IGNORECASE) for pat in NON_LIBRE_CGM_EXCLUDE_PATTERNS):
+                skipped += 1
+                print(f"  [SKIP] 비대상 CGM 제외: {product_name[:40]}")
+                continue
+
             # 최소 가격 필터
             if min_price and total_price < min_price:
                 skipped += 1
                 print(f"  [SKIP] {product_name[:40]}  ({total_price:,} < {min_price:,})")
                 continue
 
-            qty, unit_price, how = analyze_product(product_name, total_price)
+            qty, unit_price, how = analyze_product(
+                product_name,
+                total_price,
+                p.get("link") or "",
+                confirmed_map,
+            )
 
             row = {
                 "keyword": BRAND_KEYWORD,

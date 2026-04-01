@@ -42,7 +42,7 @@ def build_monthly_report(
         priority_list.append(
             {
                 "seller_name_std": m["seller_name_std"],
-                "platform": channel,
+                "platform": m.get("channel") or channel,
                 "below_threshold_count": m["below_threshold_count"],
                 "observations": m["observations"],
                 "below_ratio": m["below_ratio"],

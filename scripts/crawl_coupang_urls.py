@@ -36,6 +36,23 @@ ZENROWS_ENDPOINT = "https://api.zenrows.com/v1/"
 MAX_RETRY = 3
 CONSECUTIVE_FAIL_LIMIT = 3
 
+LIBRE2_INCLUDE_PATTERNS = [
+    r"프리스타일\s*리브레\s*2",
+    r"리브레\s*2",
+    r"freestyle\s*libre\s*2",
+    r"libre\s*2",
+]
+
+NON_LIBRE_CGM_EXCLUDE_PATTERNS = [
+    r"덱스콤",
+    r"dexcom",
+    r"\bg\s*7\b",
+    r"\bg7\b",
+    r"가디언",
+    r"guardian",
+    r"케어센스\s*에어",
+]
+
 
 # ──────────────────────────────────────────────
 # Scrapingbee 요청
@@ -214,6 +231,17 @@ def _clean_text(value: Optional[str]) -> str:
     if not value:
         return ""
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _is_target_libre2_product(title: str) -> bool:
+    text = (title or "").strip()
+    if not text:
+        return False
+
+    if any(re.search(pattern, text, re.IGNORECASE) for pattern in NON_LIBRE_CGM_EXCLUDE_PATTERNS):
+        return False
+
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in LIBRE2_INCLUDE_PATTERNS)
 
 
 def _extract_meta_content(soup: BeautifulSoup, attrs: Dict[str, str]) -> str:
@@ -439,6 +467,17 @@ def crawl_one_url(session: requests.Session, item: Dict[str, Any]) -> Dict[str, 
             image_url = _extract_image_url(soup)
             stock_status = _extract_stock_status(soup)
             price = _extract_price(soup)
+
+            if not _is_target_libre2_product(product_name):
+                return {
+                    "ok": False,
+                    "url": url,
+                    "final_url": url,
+                    "status_code": status_code,
+                    "error": "non_target_product",
+                    "product_name": product_name,
+                    "seller_name": seller_name,
+                }
 
             row = _normalize_row(
                 keyword=keyword,

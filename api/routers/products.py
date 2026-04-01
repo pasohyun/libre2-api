@@ -1,10 +1,14 @@
 # api/routers/products.py
-from fastapi import APIRouter, Query, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Query, Depends, HTTPException, BackgroundTasks, Body
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from api.database import SessionLocal
 from api.schemas import ProductListResponse
 from datetime import datetime, timedelta
+import io
+
+import pandas as pd
 from zoneinfo import ZoneInfo
 import threading
 import os
@@ -101,10 +105,28 @@ def _to_display_image_url(value: str | None) -> str | None:
 
 
 _MALL_NAME_DB_TO_PUBLIC = {
-    "글루어트": "글루코핏",
-    "무화당": "닥다몰",
+    "랜식": "랜식(글핏몰)",
+    "글핏몰": "랜식(글핏몰)",
+    "글루코핏": "랜식(글핏몰)",
+    "글루어트": "랜식(글핏몰)",
+    "닥터다이어리": "닥터다이어리(닥다몰)",
+    "닥다몰": "닥터다이어리(닥다몰)",
+    "무화당": "닥터다이어리(무화당)",
 }
-_MALL_NAME_PUBLIC_TO_LEGACY = {v: k for k, v in _MALL_NAME_DB_TO_PUBLIC.items()}
+_MALL_NAME_PUBLIC_TO_DB_CANDIDATES = {
+    "랜식(글핏몰)": ("랜식", "글핏몰", "글루코핏", "글루어트"),
+    "닥터다이어리(닥다몰)": ("닥다몰", "닥터다이어리"),
+    "닥터다이어리(무화당)": ("무화당",),
+}
+
+# 대시보드/채널 그래프에 고정 노출하는 주요 5개 (표준 표기명 = SQL CASE 결과와 동일)
+_MAJOR_CHART_MALLS_PUBLIC = [
+    "닥터다이어리(닥다몰)",
+    "랜식(글핏몰)",
+    "레디투힐",
+    "메디프라",
+    "필라이즈",
+]
 
 
 def _to_public_mall_name(name: str | None) -> str:
@@ -118,9 +140,11 @@ def _to_db_mall_name(name: str | None) -> str:
     raw = (name or "").strip()
     if not raw:
         return ""
-    # DB는 표준 이름(글루코핏/닥다몰)으로 저장되므로
-    # 과거 이름이 들어와도 표준 이름으로 조회한다.
-    return _to_public_mall_name(raw)
+    # 공개 표준명이 들어오면 DB 후보군의 대표 키로 변환한다.
+    candidates = _MALL_NAME_PUBLIC_TO_DB_CANDIDATES.get(raw)
+    if candidates:
+        return candidates[0]
+    return raw
 
 
 def _mall_name_candidates(name: str | None) -> tuple[str, ...]:
@@ -129,10 +153,9 @@ def _mall_name_candidates(name: str | None) -> tuple[str, ...]:
     예) 글루코핏 -> (글루코핏, 글루어트)
     """
     public_name = _to_public_mall_name(name)
-    legacy_name = _MALL_NAME_PUBLIC_TO_LEGACY.get(public_name)
-    values = [public_name]
-    if legacy_name:
-        values.append(legacy_name)
+    values = [public_name, (name or "").strip()]
+    for candidate in _MALL_NAME_PUBLIC_TO_DB_CANDIDATES.get(public_name, ()):
+        values.append(candidate)
     # 빈 문자열 제거 + 순서 유지 dedupe
     result = []
     seen = set()
@@ -144,14 +167,35 @@ def _mall_name_candidates(name: str | None) -> tuple[str, ...]:
     return tuple(result)
 
 
+def _trends_mall_in_list(raw_names: list[str]) -> list[str]:
+    """
+    tracked-malls/trends의 WHERE 절은 표준화 CASE 결과와 비교한다.
+    mall_list에 DB 원시 mall_name(예: 닥다몰)을 넣으면 표준명(닥터다이어리(닥다몰))과
+    매칭되지 않아 해당 판매처 데이터가 통째로 빠진다. 항상 공개 표준명으로 변환한다.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in raw_names:
+        pm = _to_public_mall_name((m or "").strip())
+        if pm and pm not in seen:
+            seen.add(pm)
+            out.append(pm)
+    return out
+
+
 def _mall_name_std_sql(column_name: str) -> str:
     """
     SQL에서 판매처명을 표준명으로 통합하기 위한 CASE 식.
     """
     return (
         f"CASE TRIM({column_name}) "
-        "WHEN '글루어트' THEN '글루코핏' "
-        "WHEN '무화당' THEN '닥다몰' "
+        "WHEN '랜식' THEN '랜식(글핏몰)' "
+        "WHEN '글핏몰' THEN '랜식(글핏몰)' "
+        "WHEN '글루코핏' THEN '랜식(글핏몰)' "
+        "WHEN '글루어트' THEN '랜식(글핏몰)' "
+        "WHEN '닥터다이어리' THEN '닥터다이어리(닥다몰)' "
+        "WHEN '닥다몰' THEN '닥터다이어리(닥다몰)' "
+        "WHEN '무화당' THEN '닥터다이어리(무화당)' "
         f"ELSE TRIM({column_name}) END"
     )
 
@@ -281,6 +325,140 @@ def get_today_products(db: Session = Depends(get_db)):
         error_detail = f"Database error: {str(e)}\n{traceback.format_exc()}"
         print(f"Error in get_today_products: {error_detail}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@router.get("/export/raw")
+def export_raw_products_excel(
+    date: str | None = Query(None, description="단일 일자 (YYYY-MM-DD). start_date/end_date 미지정 시 사용"),
+    start_date: str | None = Query(None, description="시작 일자 (YYYY-MM-DD, KST)"),
+    end_date: str | None = Query(None, description="종료 일자 (YYYY-MM-DD, KST, 포함)"),
+    channel: str = Query("all", description="채널 필터 (all, naver, coupang, others)"),
+    header_kr: bool = Query(True, description="엑셀 헤더 한글 라벨 변환 여부"),
+    db: Session = Depends(get_db),
+):
+    """
+    지정한 KST 기간에 DB에 쌓인 products 원본 행을 엑셀(.xlsx)로 내려준다.
+    - date: 단일 일자
+    - start_date/end_date: 기간 (end_date 포함)
+    시각 기준은 COALESCE(snapshot_at, created_at) (오늘 목록 / 리포트와 동일).
+    """
+    def _parse_ymd(value: str, name: str) -> datetime:
+        v = (value or "").strip()
+        try:
+            y, m, d = (int(x) for x in v.split("-"))
+            return datetime(y, m, d, tzinfo=KST)
+        except Exception:
+            raise HTTPException(status_code=400, detail=f"{name} must be YYYY-MM-DD") from None
+
+    if start_date and end_date:
+        start_kst = _parse_ymd(start_date, "start_date")
+        end_kst = _parse_ymd(end_date, "end_date")
+    elif date:
+        start_kst = _parse_ymd(date, "date")
+        end_kst = start_kst
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either date, or start_date and end_date",
+        )
+
+    if end_kst < start_kst:
+        raise HTTPException(status_code=400, detail="end_date must be >= start_date")
+
+    day_start = start_kst.replace(tzinfo=None)
+    day_end = (end_kst + timedelta(days=1)).replace(tzinfo=None)
+
+    ch = (channel or "all").strip().lower()
+    allowed_channels = {"all", "naver", "coupang", "others"}
+    if ch not in allowed_channels:
+        raise HTTPException(status_code=400, detail="channel must be one of: all, naver, coupang, others")
+
+    channel_where = ""
+    params = {"day_start": day_start, "day_end": day_end}
+    if ch != "all":
+        if ch == "naver":
+            channel_where = " AND (channel = :channel OR channel IS NULL OR TRIM(channel) = '')"
+        else:
+            channel_where = " AND channel = :channel"
+        params["channel"] = ch
+
+    header_map_kr = {
+        "id": "ID",
+        "keyword": "키워드",
+        "product_name": "상품명",
+        "unit_price": "단가",
+        "quantity": "수량",
+        "total_price": "판매가",
+        "mall_name": "판매처",
+        "calc_method": "산출방식",
+        "link": "상품링크",
+        "image_url": "원본이미지URL",
+        "card_image_path": "카드이미지경로",
+        "channel": "채널",
+        "market": "마켓",
+        "snapshot_id": "스냅샷ID",
+        "snapshot_at": "스냅샷시각",
+        "calc_valid": "계산유효",
+        "created_at": "생성시각",
+    }
+
+    try:
+        rows = (
+            db.execute(
+                text(
+                    f"""
+                    SELECT
+                        id,
+                        keyword,
+                        product_name,
+                        unit_price,
+                        quantity,
+                        total_price,
+                        mall_name,
+                        calc_method,
+                        link,
+                        image_url,
+                        card_image_path,
+                        channel,
+                        market,
+                        snapshot_id,
+                        snapshot_at,
+                        calc_valid,
+                        created_at
+                    FROM products
+                    WHERE COALESCE(snapshot_at, created_at) >= :day_start
+                      AND COALESCE(snapshot_at, created_at) < :day_end
+                      {channel_where}
+                    ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
+                    """
+                ),
+                params,
+            )
+            .mappings()
+            .all()
+        )
+        df = pd.DataFrame([dict(r) for r in rows])
+        if header_kr and not df.empty:
+            df = df.rename(columns=header_map_kr)
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="products")
+        buf.seek(0)
+        start_str = start_kst.strftime("%Y-%m-%d")
+        end_str = end_kst.strftime("%Y-%m-%d")
+        filename = f"raw_{ch}_{start_str}_{end_str}_v1.xlsx"
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+    except Exception as e:
+        import traceback
+
+        print(f"Error in export_raw_products_excel: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Export error: {str(e)}") from e
 
 
 @router.get("/lowest")
@@ -486,21 +664,47 @@ def get_tracked_malls_summary(
     """
     # 채널 필터 SQL 조건 생성
     channel_filter_sql = ""
+    channel_filter_sql_plain = ""
+    channel_where_plain = ""
     channel_params = {}
     if channel:
-        channel_filter_sql = " AND p.channel = :channel"
+        channel_filter_sql = (
+            " AND (p.channel = :channel "
+            "OR (:channel = 'naver' AND (p.channel IS NULL OR TRIM(p.channel) = '')))"
+        )
+        channel_filter_sql_plain = (
+            " AND (channel = :channel "
+            "OR (:channel = 'naver' AND (channel IS NULL OR TRIM(channel) = '')))"
+        )
+        channel_where_plain = (
+            "WHERE (channel = :channel "
+            "OR (:channel = 'naver' AND (channel IS NULL OR TRIM(channel) = '')))"
+        )
         channel_params["channel"] = channel
 
     if malls:
         mall_list = [_to_db_mall_name(m.strip()) for m in malls.split(",") if m.strip()]
     elif config.TRACKED_MALLS and not channel:
         mall_list = [_to_db_mall_name(m) for m in config.TRACKED_MALLS]
+    elif channel == "naver":
+        # 네이버 채널은 전체 기간에 한 번이라도 등장한 판매처를 모두 노출한다.
+        mall_name_std_expr = _mall_name_std_sql("mall_name")
+        all_naver_malls = db.execute(text(f"""
+            SELECT {mall_name_std_expr} AS mall_name
+            FROM products
+            WHERE channel = :channel
+               OR channel IS NULL
+               OR TRIM(channel) = ''
+            GROUP BY {mall_name_std_expr}
+            ORDER BY COUNT(*) DESC, MIN(unit_price) ASC
+        """), {"channel": channel}).fetchall()
+        mall_list = [row[0] for row in all_naver_malls]
     else:
         top_malls = db.execute(text(f"""
             WITH latest AS (
                 SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
                 FROM products
-                {"WHERE channel = :channel" if channel else ""}
+                {channel_where_plain if channel else ""}
                 ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
                 LIMIT 1
             )
@@ -525,23 +729,14 @@ def get_tracked_malls_summary(
         results = []
         for mall_name in mall_list:
             mall_name_list = _mall_name_candidates(mall_name)
+            # 최신 스냅샷이 아닌 "해당 판매처의 최신 수집값"을 현재가로 사용한다.
             current = db.execute(text(f"""
-                WITH latest AS (
-                    SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
-                    FROM products
-                    {"WHERE channel = :channel" if channel else ""}
-                    ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
-                    LIMIT 1
-                )
-                SELECT MIN(unit_price) as current_price
+                SELECT p.unit_price as current_price
                 FROM products p
-                CROSS JOIN latest l
                 WHERE p.mall_name IN :mall_name_list
-                  AND (
-                      (l.snapshot_id IS NOT NULL AND p.snapshot_id = l.snapshot_id)
-                      OR (l.snapshot_id IS NULL AND COALESCE(p.snapshot_at, p.created_at) = l.snapshot_time)
-                  )
                   {channel_filter_sql}
+                ORDER BY COALESCE(p.snapshot_at, p.created_at) DESC, p.id DESC
+                LIMIT 1
             """), {"mall_name_list": mall_name_list, **channel_params}).fetchone()
 
             current_price = current[0] if current and current[0] else None
@@ -615,9 +810,22 @@ def get_tracked_malls_trends(
     """
     # 채널 필터 SQL 조건 생성
     channel_filter_sql = ""
+    channel_filter_sql_plain = ""
+    channel_where_plain = ""
     channel_params = {}
     if channel:
-        channel_filter_sql = " AND channel = :channel"
+        channel_filter_sql = (
+            " AND (channel = :channel "
+            "OR (:channel = 'naver' AND (channel IS NULL OR TRIM(channel) = '')))"
+        )
+        channel_filter_sql_plain = (
+            " AND (p.channel = :channel "
+            "OR (:channel = 'naver' AND (p.channel IS NULL OR TRIM(p.channel) = '')))"
+        )
+        channel_where_plain = (
+            "WHERE (channel = :channel "
+            "OR (:channel = 'naver' AND (channel IS NULL OR TRIM(channel) = '')))"
+        )
         channel_params["channel"] = channel
 
     if malls:
@@ -629,7 +837,7 @@ def get_tracked_malls_trends(
             WITH latest AS (
                 SELECT snapshot_id, COALESCE(snapshot_at, created_at) AS snapshot_time
                 FROM products
-                {"WHERE channel = :channel" if channel else ""}
+                {channel_where_plain if channel else ""}
                 ORDER BY COALESCE(snapshot_at, created_at) DESC, id DESC
                 LIMIT 1
             )
@@ -640,17 +848,22 @@ def get_tracked_malls_trends(
                 (l.snapshot_id IS NOT NULL AND p.snapshot_id = l.snapshot_id)
                 OR (l.snapshot_id IS NULL AND COALESCE(p.snapshot_at, p.created_at) = l.snapshot_time)
             )
-            {channel_filter_sql.replace("channel", "p.channel") if channel else ""}
+            {channel_filter_sql_plain if channel else ""}
             GROUP BY mall_name
             ORDER BY MIN(unit_price) ASC
             LIMIT 10
         """), {**channel_params}).fetchall()
         mall_list = [row[0] for row in top_malls]
 
-    if not mall_list:
-        return {"days": days, "malls": [], "data": []}
-
     try:
+        mall_list_pub = _trends_mall_in_list(mall_list or [])
+        if channel in ("naver", "coupang"):
+            for name in _MAJOR_CHART_MALLS_PUBLIC:
+                if name not in mall_list_pub:
+                    mall_list_pub.append(name)
+        if not mall_list_pub:
+            return {"days": days, "malls": [], "data": []}
+
         mall_name_std_expr = _mall_name_std_sql("mall_name")
 
         rows = db.execute(text(f"""
@@ -664,7 +877,7 @@ def get_tracked_malls_trends(
               {channel_filter_sql}
             GROUP BY DATE(created_at), {mall_name_std_expr}
             ORDER BY date ASC
-        """), {"mall_list": tuple(mall_list), "days": days, **channel_params}).fetchall()
+        """), {"mall_list": tuple(mall_list_pub), "days": days, **channel_params}).fetchall()
 
         date_data = {}
         for row in rows:
@@ -679,13 +892,7 @@ def get_tracked_malls_trends(
                 date_data[date_str][mall_name] = row[2]
 
         trend_data = list(date_data.values())
-        public_malls = []
-        seen_public = set()
-        for m in mall_list:
-            pm = _to_public_mall_name(m)
-            if pm and pm not in seen_public:
-                seen_public.add(pm)
-                public_malls.append(pm)
+        public_malls = list(mall_list_pub)
 
         return {
             "days": days,
@@ -714,7 +921,10 @@ def get_mall_timeline(
         channel_filter_sql = ""
         params = {"mall_name_list": db_mall_name_list, "days": days}
         if channel:
-            channel_filter_sql = " AND p.channel = :channel"
+            channel_filter_sql = (
+                " AND (p.channel = :channel "
+                "OR (:channel = 'naver' AND (p.channel IS NULL OR TRIM(p.channel) = '')))"
+            )
             params["channel"] = channel
         rows = db.execute(text(f"""
             SELECT
@@ -736,39 +946,29 @@ def get_mall_timeline(
             ORDER BY COALESCE(p.snapshot_at, p.created_at) DESC
         """), params).fetchall()
 
-        # snapshot_id 또는 시간대(hour)별로 그룹핑하여 최저가 1건
-        slot_best = {}
+        # 모든 크롤링 상품을 개별 항목으로 반환
+        timeline_items = []
         for row in rows:
             ts_raw = row[9]
-            snap_id = row[10]
             captured_at_kst = _to_kst(ts_raw) if hasattr(ts_raw, "strftime") else None
             date_key = captured_at_kst.strftime("%Y-%m-%d") if captured_at_kst else str(ts_raw)[:10]
-            hour_key = captured_at_kst.strftime("%H") if captured_at_kst else str(ts_raw)[11:13]
+            signed_card = _to_display_image_url(row[7])
+            timeline_items.append({
+                "id": row[1],
+                "capturedAt": captured_at_kst.strftime("%Y-%m-%d %H:%M") if captured_at_kst else str(ts_raw),
+                "date": date_key,
+                "time": captured_at_kst.strftime("%H:%M") if captured_at_kst else str(ts_raw)[11:16],
+                "productName": row[0],
+                "unitPrice": row[2],
+                "pack": row[3],
+                "price": row[4],
+                "url": row[5] or "#",
+                "captureThumb": row[6] or "",
+                "cardImagePath": signed_card or "",
+                "calcMethod": row[8],
+            })
 
-            if snap_id:
-                slot_key = f"{date_key}_{snap_id}"
-            else:
-                slot_key = f"{date_key}_{hour_key}"
-
-            unit_price = row[2]
-            if slot_key not in slot_best or unit_price < slot_best[slot_key]["unitPrice"]:
-                signed_card = _to_display_image_url(row[7])
-                slot_best[slot_key] = {
-                    "id": row[1],
-                    "capturedAt": captured_at_kst.strftime("%Y-%m-%d %H:%M") if captured_at_kst else str(ts_raw),
-                    "date": date_key,
-                    "time": captured_at_kst.strftime("%H:%M") if captured_at_kst else str(ts_raw)[11:16],
-                    "productName": row[0],
-                    "unitPrice": row[2],
-                    "pack": row[3],
-                    "price": row[4],
-                    "url": row[5] or "#",
-                    "captureThumb": row[6] or "",
-                    "cardImagePath": signed_card or "",
-                    "calcMethod": row[8],
-                }
-
-        timeline = sorted(slot_best.values(), key=lambda x: x["capturedAt"], reverse=True)
+        timeline = sorted(timeline_items, key=lambda x: x["capturedAt"], reverse=True)
 
         return {
             "mall_name": _to_public_mall_name(mall_name),
@@ -953,3 +1153,46 @@ def manual_confirm_quantity(
         "unit_price": new_unit_price,
         "calc_method": "수동확인(완료)",
     }
+
+
+@router.post("/delete")
+def delete_products(
+    product_ids: list[int] = Body(..., embed=True, description="삭제할 products.id 목록"),
+    db: Session = Depends(get_db),
+):
+    """
+    선택한 상품 행을 DB에서 삭제한다. (메인 대시보드 일괄 삭제용)
+    """
+    ids = [int(x) for x in (product_ids or []) if int(x) > 0]
+    # 순서 유지 dedupe
+    deduped_ids: list[int] = []
+    seen = set()
+    for pid in ids:
+        if pid in seen:
+            continue
+        seen.add(pid)
+        deduped_ids.append(pid)
+
+    if not deduped_ids:
+        raise HTTPException(status_code=400, detail="product_ids is empty")
+    if len(deduped_ids) > 500:
+        raise HTTPException(status_code=400, detail="Too many ids. Max 500 per request")
+
+    try:
+        result = db.execute(
+            text("DELETE FROM products WHERE id IN :id_list"),
+            {"id_list": tuple(deduped_ids)},
+        )
+        db.commit()
+        deleted_count = int(result.rowcount or 0)
+        return {
+            "deleted": True,
+            "deleted_count": deleted_count,
+            "requested_count": len(deduped_ids),
+            "product_ids": deduped_ids,
+        }
+    except Exception as e:
+        import traceback
+        db.rollback()
+        print(f"Error in delete_products: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
