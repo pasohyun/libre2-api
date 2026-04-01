@@ -47,8 +47,6 @@ KEYWORDS = (
 # 호출 간격(레이트리밋 여유)
 SLEEP_SEC = float(os.getenv("COUPANG_SLEEP_SEC", "1.3"))
 
-# ✅ 기준 단가 필터 유지(85000 이하)
-TARGET_UNIT_PRICE = int(os.getenv("TARGET_UNIT_PRICE", "85000"))
 
 
 def _auth_header(method: str, url_path_with_query: str) -> str:
@@ -216,11 +214,8 @@ def run_crawling():
     CALLS = int(os.getenv("COUPANG_CALLS", "50"))
     SLEEP_SEC = float(os.getenv("COUPANG_SLEEP_SEC", "1.3"))
 
-    TARGET = int(os.getenv("TARGET_UNIT_PRICE", "85000"))
-    USE_TARGET = os.getenv("USE_TARGET_FILTER", "1") == "1"
-
     print(f"KEYWORDS({len(keywords)}): {keywords}")
-    print(f"calls={CALLS}, limit={COUPANG_LIMIT}, target<={TARGET} ({'ON' if USE_TARGET else 'OFF'})")
+    print(f"calls={CALLS}, limit={COUPANG_LIMIT}")
 
     seen = set()
 
@@ -233,7 +228,6 @@ def run_crawling():
     stat_dup = 0
     stat_accessory = 0
     stat_low_unit = 0
-    stat_over_target = 0
     stat_other_brand = 0
     stat_invalid = 0
 
@@ -295,10 +289,6 @@ def run_crawling():
                 stat_low_unit += 1
                 continue
 
-            if USE_TARGET and unit_price > TARGET:
-                stat_over_target += 1
-                continue
-
             kept_rows.append({
                 "keyword": kw,
                 "productId": pid,
@@ -321,8 +311,8 @@ def run_crawling():
     print("\nRESULT")
     print(f"calls={CALLS}, limit={COUPANG_LIMIT}, total_fetched={total_fetched}")
     print(f"unique_productIds={len(seen)}")
-    print(f"kept_rows(unit<=target)={len(kept_rows)} (target={TARGET}, filter={'ON' if USE_TARGET else 'OFF'})")
-    print(f"excluded: invalid={stat_invalid}, dup={stat_dup}, accessory={stat_accessory}, unit<65000={stat_low_unit}, over_target={stat_over_target}, other_brand={stat_other_brand}")
+    print(f"kept_rows(unit>=65000)={len(kept_rows)}")
+    print(f"excluded: invalid={stat_invalid}, dup={stat_dup}, accessory={stat_accessory}, unit<65000={stat_low_unit}, other_brand={stat_other_brand}")
 
     # ✅ CSV 저장
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
