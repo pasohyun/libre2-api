@@ -98,6 +98,7 @@ def compute_seller_metrics(
                 "unit_price": int(r["unit_price"]),
                 "ts": r["ts"],
                 "seller": seller,
+                "platform": r.get("channel") or channel,
             }
 
     # aggregate per seller
@@ -113,6 +114,7 @@ def compute_seller_metrics(
             "below_count": len(below),
             "min_unit_price": min_item["unit_price"],
             "min_time": min_item["ts"],
+            "platform": min_item.get("platform", ""),
         })
 
     below_sellers = [s for s in seller_stats if s["below_count"] > 0]
@@ -138,6 +140,7 @@ def compute_seller_metrics(
                 "seller_name": s["seller_name"],
                 "min_unit_price": s["min_unit_price"],
                 "min_time": s["min_time"],
+                "platform": s.get("platform", ""),
             }
             for s in top5
         ],
