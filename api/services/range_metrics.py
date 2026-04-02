@@ -168,15 +168,16 @@ def compute_below_threshold_detail(
     start, end = _date_range(start_date, end_date)
     rows = _fetch_products(db, start, end, channel)
 
-    # 기준가 이하인 모든 상품을 셀러별로 수집
+    # 셀러별 전체 스냅샷 수집 + 기준가 이하 여부 추적
     by_seller: Dict[str, List[Dict]] = defaultdict(list)
+    below_sellers: set = set()
     for r in rows:
         if int(r.get("calc_valid") or 1) != 1:
             continue
         price = int(r["unit_price"])
-        if price > threshold_price:
-            continue
         seller = (r["mall_name"] or "").strip() or "(unknown)"
+        if price <= threshold_price:
+            below_sellers.add(seller)
         by_seller[seller].append({
             "seller_name": seller,
             "platform": r.get("channel") or channel,
@@ -193,6 +194,9 @@ def compute_below_threshold_detail(
 
     result: List[Dict[str, Any]] = []
     for seller, items in by_seller.items():
+        # 기준가 이하 기록이 1건이라도 있는 셀러만 포함, 단 전체 스냅샷을 내려줌
+        if seller not in below_sellers:
+            continue
         all_snapshots = sorted(items, key=lambda x: (x["time"], x["unit_price"]))
         # seller-level min
         min_item = min(all_snapshots, key=lambda x: (x["unit_price"], x["time"]))
