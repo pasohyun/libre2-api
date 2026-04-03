@@ -36,7 +36,7 @@ def create_dashboard_token() -> str:
     from datetime import datetime, timedelta, timezone
 
     now = datetime.now(timezone.utc)
-    exp = now + timedelta(days=7)
+    exp = now + timedelta(days=1)
     payload = {
         "sub": "dashboard",
         "iat": int(now.timestamp()),
