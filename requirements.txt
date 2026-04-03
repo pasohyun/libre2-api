@@ -13,6 +13,7 @@ sqlalchemy
 python-dotenv
 mysql-connector-python
 cryptography  # MySQL 8.0 인증 방식 지원
+PyJWT  # 대시보드 공유 비밀번호 JWT
 
 # -----------------------
 # Crawling / HTTP
