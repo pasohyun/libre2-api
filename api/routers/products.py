@@ -206,6 +206,9 @@ def get_latest_products(db: Session = Depends(get_db)):
     최신 스냅샷 기준 상품 리스트
     - snapshot_at이 있으면 snapshot_at을 기준으로 최신 스냅샷을 잡고,
     - 없으면 created_at을 기준으로 잡는다.
+    - 네이버 쪽은 쿠팡 브랜드 스냅샷과 (product_name, quantity)가 겹치면 제외한다.
+      단, 쇼핑 API의 '네이버(최저가비교)' 집계 행은 스마트스토어 직접 행과 다른 가격을
+      담을 수 있으므로 제외 규칙에서 항상 포함한다.
     """
     try:
         rows = db.execute(text("""
@@ -243,10 +246,13 @@ def get_latest_products(db: Session = Depends(get_db)):
                 p.snapshot_id = (SELECT snapshot_id FROM latest_coupang_brand)
             ) OR (
                 p.snapshot_id = (SELECT snapshot_id FROM latest_naver)
-                AND NOT EXISTS (
-                    SELECT 1 FROM coupang_brand_keys cb
-                    WHERE cb.product_name = p.product_name
-                      AND cb.quantity = p.quantity
+                AND (
+                    TRIM(p.mall_name) IN ('최저가비교', '네이버')
+                    OR NOT EXISTS (
+                        SELECT 1 FROM coupang_brand_keys cb
+                        WHERE cb.product_name = p.product_name
+                          AND cb.quantity = p.quantity
+                    )
                 )
             )
             ORDER BY unit_price ASC
