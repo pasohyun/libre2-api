@@ -38,3 +38,4 @@ venv/
 
 # Local mis-typed venv folder
 vnev/
+.vercel

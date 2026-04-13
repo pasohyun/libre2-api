@@ -1685,9 +1685,13 @@ function GlobalMemoBoard() {
   );
 }
 
-function VendorMemosAggregateCard({ onOpenSeller }) {
+function VendorMemosAggregateCard({ onOpenSeller, sellerOptions = [] }) {
   const [data, setData] = useState({ count: 0, items: [] });
   const [loading, setLoading] = useState(true);
+  const [quickSeller, setQuickSeller] = useState("");
+  const [quickSummary, setQuickSummary] = useState("");
+  const [quickBody, setQuickBody] = useState("");
+  const [quickSaving, setQuickSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1716,6 +1720,38 @@ function VendorMemosAggregateCard({ onOpenSeller }) {
     return `${s.slice(0, n)}…`;
   };
 
+  const handleQuickSave = async () => {
+    const sellerKey = String(quickSeller || "");
+    const body = String(quickBody || "").trim();
+    if (!sellerKey) {
+      window.alert("판매처를 선택해 주세요.");
+      return;
+    }
+    if (!body) {
+      window.alert("메모 내용을 입력해 주세요.");
+      return;
+    }
+    const sep = sellerKey.indexOf("\t");
+    if (sep <= 0) {
+      window.alert("판매처 값이 올바르지 않습니다.");
+      return;
+    }
+    const channel = sellerKey.slice(0, sep);
+    const vendor = sellerKey.slice(sep + 1);
+    setQuickSaving(true);
+    try {
+      await createVendorMemo(channel, vendor, body, String(quickSummary || "").trim() || null);
+      setQuickBody("");
+      setQuickSummary("");
+      await load();
+      if (typeof onOpenSeller === "function") onOpenSeller(channel, vendor);
+    } catch (e) {
+      window.alert(String(e?.message || e));
+    } finally {
+      setQuickSaving(false);
+    }
+  };
+
   return (
     <Card
       title="업체 메모 취합 · 조회"
@@ -1730,6 +1766,51 @@ function VendorMemosAggregateCard({ onOpenSeller }) {
         </button>
       }
     >
+      <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+        <div className="mb-2 text-xs font-semibold text-slate-600">빠른 등록</div>
+        <div className="grid gap-2 md:grid-cols-12">
+          <label className="md:col-span-4 text-xs font-medium text-slate-600">
+            판매처 선택
+            <select
+              value={quickSeller}
+              onChange={(e) => setQuickSeller(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800"
+            >
+              <option value="">선택하세요</option>
+              {sellerOptions.map((opt) => (
+                <option key={opt.key} value={opt.key}>
+                  {opt.label} ({channelLabel(opt.channel)})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="md:col-span-8 text-xs font-medium text-slate-600">
+            요약 (선택)
+            <input
+              value={quickSummary}
+              onChange={(e) => setQuickSummary(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800"
+              placeholder="한 줄 요약"
+              maxLength={500}
+            />
+          </label>
+          <label className="md:col-span-10 text-xs font-medium text-slate-600">
+            메모 내용
+            <textarea
+              value={quickBody}
+              onChange={(e) => setQuickBody(e.target.value)}
+              rows={2}
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800"
+              placeholder="해당 업체 관련 메모를 입력하세요."
+            />
+          </label>
+          <div className="md:col-span-2 flex items-end justify-end">
+            <PrimaryButton onClick={handleQuickSave} disabled={quickSaving}>
+              {quickSaving ? "등록 중…" : "빠른 등록"}
+            </PrimaryButton>
+          </div>
+        </div>
+      </div>
       <div className="mb-2 text-xs text-slate-500">
         전체 <span className="font-semibold text-slate-700">{data.count}</span>건 · 최근{" "}
         {data.items.length}건 표시
@@ -3002,6 +3083,29 @@ function MainDashboard({
     );
   }, [offersForSellerPick]);
 
+  const allSellerOptions = useMemo(() => {
+    const map = new Map();
+    for (const o of offers) {
+      const ch = String(o.channel || "").trim();
+      const raw = String(o.seller || "").trim();
+      if (!ch || !raw) continue;
+      const key = `${ch}\t${raw}`;
+      if (map.has(key)) continue;
+      map.set(key, {
+        key,
+        label: displaySellerName(ch, raw) || raw,
+        channel: ch,
+        seller: raw,
+      });
+    }
+    return [...map.values()].sort((a, b) =>
+      `${String(a.label)}${String(a.channel)}`.localeCompare(
+        `${String(b.label)}${String(b.channel)}`,
+        "ko",
+      ),
+    );
+  }, [offers]);
+
   const filteredOffers = useMemo(() => {
     let result = [...offersForSellerPick];
 
@@ -3444,7 +3548,10 @@ function MainDashboard({
           setHtmlGenerating(false);
         }}
       />
-      <VendorMemosAggregateCard onOpenSeller={onOpenSeller} />
+      <VendorMemosAggregateCard
+        onOpenSeller={onOpenSeller}
+        sellerOptions={allSellerOptions}
+      />
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 lg:col-span-4">
           <SettingsPanel
