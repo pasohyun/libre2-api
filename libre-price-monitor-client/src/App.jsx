@@ -1689,6 +1689,7 @@ function VendorMemosAggregateCard({ onOpenSeller, sellerOptions = [] }) {
   const [data, setData] = useState({ count: 0, items: [] });
   const [loading, setLoading] = useState(true);
   const [quickSeller, setQuickSeller] = useState("");
+  const [quickSellerQuery, setQuickSellerQuery] = useState("");
   const [quickSummary, setQuickSummary] = useState("");
   const [quickBody, setQuickBody] = useState("");
   const [quickSaving, setQuickSaving] = useState(false);
@@ -1719,6 +1720,17 @@ function VendorMemosAggregateCard({ onOpenSeller, sellerOptions = [] }) {
     if (s.length <= n) return s;
     return `${s.slice(0, n)}…`;
   };
+
+  const filteredSellerOptions = useMemo(() => {
+    const q = String(quickSellerQuery || "").trim().toLowerCase();
+    if (!q) return sellerOptions;
+    return sellerOptions.filter((opt) => {
+      const label = String(opt.label || "").toLowerCase();
+      const channel = String(channelLabel(opt.channel) || "").toLowerCase();
+      const raw = String(opt.seller || "").toLowerCase();
+      return label.includes(q) || channel.includes(q) || raw.includes(q);
+    });
+  }, [sellerOptions, quickSellerQuery]);
 
   const handleQuickSave = async () => {
     const sellerKey = String(quickSeller || "");
@@ -1770,6 +1782,15 @@ function VendorMemosAggregateCard({ onOpenSeller, sellerOptions = [] }) {
         <div className="mb-2 text-xs font-semibold text-slate-600">빠른 등록</div>
         <div className="grid gap-2 md:grid-cols-12">
           <label className="md:col-span-4 text-xs font-medium text-slate-600">
+            판매처 검색
+            <input
+              value={quickSellerQuery}
+              onChange={(e) => setQuickSellerQuery(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800"
+              placeholder="판매처/채널 키워드 검색"
+            />
+          </label>
+          <label className="md:col-span-4 text-xs font-medium text-slate-600">
             판매처 선택
             <select
               value={quickSeller}
@@ -1777,14 +1798,14 @@ function VendorMemosAggregateCard({ onOpenSeller, sellerOptions = [] }) {
               className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800"
             >
               <option value="">선택하세요</option>
-              {sellerOptions.map((opt) => (
+              {filteredSellerOptions.map((opt) => (
                 <option key={opt.key} value={opt.key}>
                   {opt.label} ({channelLabel(opt.channel)})
                 </option>
               ))}
             </select>
           </label>
-          <label className="md:col-span-8 text-xs font-medium text-slate-600">
+          <label className="md:col-span-4 text-xs font-medium text-slate-600">
             요약 (선택)
             <input
               value={quickSummary}
