@@ -1,0 +1,40 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Dependency directories
+env
+.venv
+
+# Ignore Python virtual environment folder
+venv/
+
+# Environment variables
+.env.local
+.env.production
+.env.production.local
+.env.development.local
+
+# Local mis-typed venv folder
+vnev/
