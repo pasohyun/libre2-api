@@ -49,6 +49,12 @@ BRAND_STORES = [
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
+    {
+        "url": "https://shop.coupang.com/promed/?platform=p",
+        "seller": "하우투약",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
 ]
 
 BRAND_KEYWORD = os.getenv("COUPANG_BRAND_KEYWORD", config.SEARCH_KEYWORD)
