@@ -16,7 +16,8 @@ from typing import List, Dict, Any
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
-load_dotenv("proxy.env")
+load_dotenv()           # .env (DB 설정 등)
+load_dotenv("proxy.env")  # Bright Data 크리덴셜
 
 import config
 from scripts.crawl_naver import (
