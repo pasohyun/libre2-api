@@ -8,11 +8,15 @@ Playwright로 JS 렌더링 후 DOM에서 상품 정보를 추출.
 """
 import os
 import re
+import time
 import uuid
 from datetime import datetime
 from typing import List, Dict, Any
 
+from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
+
+load_dotenv("proxy.env")
 
 import config
 from scripts.crawl_naver import (
@@ -47,6 +51,14 @@ BRAND_STORES = [
 ]
 
 BRAND_KEYWORD = os.getenv("COUPANG_BRAND_KEYWORD", config.SEARCH_KEYWORD)
+
+# Bright Data 주거용 프록시 설정
+PROXY_SERVER = os.getenv("BRIGHT_DATA_PROXY")  # e.g. "http://brd.superproxy.io:22225"
+PROXY_USERNAME = os.getenv("BRIGHT_DATA_USERNAME")
+PROXY_PASSWORD = os.getenv("BRIGHT_DATA_PASSWORD")
+
+# Bright Data Scraping Browser (원격 브라우저)
+BROWSER_WSS = os.getenv("BRIGHT_DATA_BROWSER_WSS")  # e.g. "wss://...@brd.superproxy.io:9222"
 
 # 브라우저 내에서 실행할 JS: 상품 링크에서 정보 추출
 JS_EXTRACT = """() => {
@@ -125,105 +137,139 @@ def _extract_product_name(lines: list) -> str:
     return ""
 
 
-def crawl_brand_store(url: str) -> List[Dict[str, Any]]:
-    """브랜드 스토어 페이지를 Playwright로 크롤링한다."""
+def _open_browser(p):
+    """Playwright 인스턴스에서 브라우저 하나를 연다 (원격 또는 로컬)."""
+    if BROWSER_WSS:
+        print(f"[BRAND] Scraping Browser 사용 (원격)")
+        last_err = None
+        for attempt in range(1, 4):
+            try:
+                return p.chromium.connect_over_cdp(BROWSER_WSS, timeout=120000), "remote"
+            except Exception as e:
+                last_err = e
+                wait = 10 * attempt
+                print(f"  [RETRY {attempt}/3] WSS 연결 실패, {wait}s 대기 후 재시도: {e}")
+                time.sleep(wait)
+        raise RuntimeError(f"WSS 연결 최종 실패: {last_err}")
+
+    # 로컬 브라우저
+    launch_opts = {
+        "headless": True,
+        "args": [
+            "--no-sandbox",
+            "--disable-blink-features=AutomationControlled",
+        ],
+    }
+    if PROXY_SERVER:
+        launch_opts["proxy"] = {
+            "server": PROXY_SERVER,
+            "username": PROXY_USERNAME,
+            "password": PROXY_PASSWORD,
+        }
+        print(f"[BRAND] 프록시 사용: {PROXY_SERVER}")
+    return p.chromium.launch(**launch_opts), "local"
+
+
+def _new_page(browser, mode: str):
+    """브라우저에서 새 페이지를 연다 (로컬은 stealth context 적용)."""
+    if mode == "remote":
+        return browser.new_page()
+    context = browser.new_context(
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        ),
+        viewport={"width": 1920, "height": 1080},
+        locale="ko-KR",
+        java_script_enabled=True,
+        ignore_https_errors=True,
+    )
+    context.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+    """)
+    return context.new_page()
+
+
+def crawl_brand_store(browser, mode: str, url: str) -> List[Dict[str, Any]]:
+    """브랜드 스토어 페이지를 크롤링한다 (브라우저는 호출자가 관리)."""
     print(f"[BRAND] 크롤링: {url}")
+    page = _new_page(browser, mode)
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-blink-features=AutomationControlled",
-            ],
-        )
-        context = browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/131.0.0.0 Safari/537.36"
-            ),
-            viewport={"width": 1920, "height": 1080},
-            locale="ko-KR",
-            java_script_enabled=True,
-        )
-        # webdriver 속성 제거 (봇 탐지 우회)
-        context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-        """)
-        page = context.new_page()
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(5000)
 
-        try:
+        # Access Denied 감지 시 재시도
+        title = page.title()
+        if "Access Denied" in title or "denied" in title.lower():
+            print("  [RETRY] Access Denied 감지, 재시도...")
+            page.wait_for_timeout(3000)
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
             page.wait_for_timeout(5000)
 
-            # Access Denied 감지 시 재시도
-            title = page.title()
-            if "Access Denied" in title or "denied" in title.lower():
-                print("  [RETRY] Access Denied 감지, 재시도...")
-                page.wait_for_timeout(3000)
-                page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_timeout(5000)
+        # 점진적 스크롤로 lazy-load 상품 전부 로딩
+        prev_count = 0
+        for scroll_i in range(30):
+            page.evaluate(f"window.scrollTo(0, {(scroll_i + 1) * 1000})")
+            page.wait_for_timeout(800)
+            cur_count = page.evaluate(
+                "document.querySelectorAll('a[href*=\"/products/\"]').length"
+            )
+            if cur_count == prev_count and scroll_i > 3:
+                break
+            prev_count = cur_count
 
-            # 점진적 스크롤로 lazy-load 상품 전부 로딩
-            prev_count = 0
-            for scroll_i in range(30):
-                page.evaluate(f"window.scrollTo(0, {(scroll_i + 1) * 1000})")
-                page.wait_for_timeout(800)
-                cur_count = page.evaluate(
-                    "document.querySelectorAll('a[href*=\"/products/\"]').length"
-                )
-                if cur_count == prev_count and scroll_i > 3:
-                    break
-                prev_count = cur_count
+        title = page.title()
+        print(f"  페이지: {title}")
 
-            title = page.title()
-            print(f"  페이지: {title}")
+        data = page.evaluate(JS_EXTRACT)
+        print(f"  추출: {len(data)}개")
 
-            data = page.evaluate(JS_EXTRACT)
-            print(f"  추출: {len(data)}개")
-
-            if not data:
-                print("  [WARN] 상품을 찾지 못했습니다.")
-                os.makedirs("screenshots", exist_ok=True)
-                ss = f"screenshots/brand_store_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                page.screenshot(path=ss, full_page=True)
-                print(f"  스크린샷: {ss}")
-                return []
-
-            products = []
-            for item in data:
-                name = _extract_product_name(item["lines"])
-                full_text = "\n".join(item["lines"])
-                price = _pick_sale_price(item["prices"], full_text)
-                href = item["href"]
-                if not href.startswith("http"):
-                    href = f"https://www.coupang.com{href}"
-
-                if not name or price <= 0:
-                    continue
-
-                products.append({
-                    "product_name": name,
-                    "total_price": price,
-                    "link": href,
-                    "image_url": item["imgSrc"] or "",
-                })
-
-            return products
-
-        except Exception as e:
-            print(f"  [ERROR] 크롤링 실패: {e}")
-            try:
-                os.makedirs("screenshots", exist_ok=True)
-                ss = f"screenshots/brand_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                page.screenshot(path=ss, full_page=True)
-                print(f"  에러 스크린샷: {ss}")
-            except Exception:
-                pass
+        if not data:
+            print("  [WARN] 상품을 찾지 못했습니다.")
+            os.makedirs("screenshots", exist_ok=True)
+            ss = f"screenshots/brand_store_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            page.screenshot(path=ss, full_page=True)
+            print(f"  스크린샷: {ss}")
             return []
-        finally:
-            browser.close()
+
+        products = []
+        for item in data:
+            name = _extract_product_name(item["lines"])
+            full_text = "\n".join(item["lines"])
+            price = _pick_sale_price(item["prices"], full_text)
+            href = item["href"]
+            if not href.startswith("http"):
+                href = f"https://www.coupang.com{href}"
+
+            if not name or price <= 0:
+                continue
+
+            products.append({
+                "product_name": name,
+                "total_price": price,
+                "link": href,
+                "image_url": item["imgSrc"] or "",
+            })
+
+        return products
+
+    except Exception as e:
+        print(f"  [ERROR] 크롤링 실패: {e}")
+        try:
+            os.makedirs("screenshots", exist_ok=True)
+            ss = f"screenshots/brand_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            page.screenshot(path=ss, full_page=True)
+            print(f"  에러 스크린샷: {ss}")
+        except Exception:
+            pass
+        return []
+    finally:
+        try:
+            page.close()
+        except Exception:
+            pass
 
 
 def run_crawling():
@@ -236,76 +282,89 @@ def run_crawling():
 
     all_rows = []
 
-    for store in BRAND_STORES:
-        url = store["url"]
-        seller = store["seller"]
-        min_price = store["min_price"]
-        name_filter = store.get("name_filter")
+    with sync_playwright() as p:
+        browser, mode = _open_browser(p)
 
-        raw_products = crawl_brand_store(url)
+        try:
+            for i, store in enumerate(BRAND_STORES):
+                url = store["url"]
+                seller = store["seller"]
+                min_price = store["min_price"]
+                name_filter = store.get("name_filter")
 
-        if not raw_products:
-            print(f"  [{seller}] 크롤링된 상품 없음")
-            continue
+                # 스토어 간 약간의 간격 (요청 리듬 완화)
+                if i > 0:
+                    time.sleep(3)
 
-        kept = 0
-        skipped = 0
-        for p in raw_products:
-            product_name = p["product_name"]
-            total_price = p["total_price"]
+                raw_products = crawl_brand_store(browser, mode, url)
 
-            # 상품명 필터 (정규식, 대소문자 무시)
-            if name_filter and not re.search(name_filter, product_name, re.IGNORECASE):
-                skipped += 1
-                continue
+                if not raw_products:
+                    print(f"  [{seller}] 크롤링된 상품 없음")
+                    continue
 
-            # 덱스콤 G7 등 비대상 CGM 제품 제외
-            if any(re.search(pat, product_name, re.IGNORECASE) for pat in NON_LIBRE_CGM_EXCLUDE_PATTERNS):
-                skipped += 1
-                print(f"  [SKIP] 비대상 CGM 제외: {product_name[:40]}")
-                continue
+                kept = 0
+                skipped = 0
+                for prod in raw_products:
+                    product_name = prod["product_name"]
+                    total_price = prod["total_price"]
 
-            # 최소 가격 필터
-            if min_price and total_price < min_price:
-                skipped += 1
-                print(f"  [SKIP] {product_name[:40]}  ({total_price:,} < {min_price:,})")
-                continue
+                    # 상품명 필터 (정규식, 대소문자 무시)
+                    if name_filter and not re.search(name_filter, product_name, re.IGNORECASE):
+                        skipped += 1
+                        continue
 
-            qty, unit_price, how = analyze_product(
-                product_name,
-                total_price,
-                p.get("link") or "",
-                confirmed_map,
-            )
+                    # 덱스콤 G7 등 비대상 CGM 제품 제외
+                    if any(re.search(pat, product_name, re.IGNORECASE) for pat in NON_LIBRE_CGM_EXCLUDE_PATTERNS):
+                        skipped += 1
+                        print(f"  [SKIP] 비대상 CGM 제외: {product_name[:40]}")
+                        continue
 
-            row = {
-                "keyword": BRAND_KEYWORD,
-                "product_name": product_name,
-                "unit_price": unit_price,
-                "quantity": qty,
-                "total_price": total_price,
-                "mall_name": seller,
-                "calc_method": how,
-                "link": p["link"],
-                "image_url": p["image_url"],
-                "card_image_path": None,
-                "channel": "coupang",
-                "market": "쿠팡",
-            }
-            all_rows.append(row)
-            kept += 1
+                    # 최소 가격 필터
+                    if min_price and total_price < min_price:
+                        skipped += 1
+                        print(f"  [SKIP] {product_name[:40]}  ({total_price:,} < {min_price:,})")
+                        continue
 
-            print(f"  [OK] {product_name[:50]}")
-            print(f"       total={total_price:,} qty={qty} unit={unit_price:,} ({how})")
+                    qty, unit_price, how = analyze_product(
+                        product_name,
+                        total_price,
+                        prod.get("link") or "",
+                        confirmed_map,
+                    )
 
-        filter_desc = []
-        if name_filter:
-            filter_desc.append(f"name='{name_filter}'")
-        if min_price:
-            filter_desc.append(f"min_price={min_price:,}")
-        filter_str = ", ".join(filter_desc) if filter_desc else "none"
-        print(f"  [{seller}] kept={kept}, skipped={skipped} (filter: {filter_str})")
-        print()
+                    row = {
+                        "keyword": BRAND_KEYWORD,
+                        "product_name": product_name,
+                        "unit_price": unit_price,
+                        "quantity": qty,
+                        "total_price": total_price,
+                        "mall_name": seller,
+                        "calc_method": how,
+                        "link": prod["link"],
+                        "image_url": prod["image_url"],
+                        "card_image_path": None,
+                        "channel": "coupang",
+                        "market": "쿠팡",
+                    }
+                    all_rows.append(row)
+                    kept += 1
+
+                    print(f"  [OK] {product_name[:50]}")
+                    print(f"       total={total_price:,} qty={qty} unit={unit_price:,} ({how})")
+
+                filter_desc = []
+                if name_filter:
+                    filter_desc.append(f"name='{name_filter}'")
+                if min_price:
+                    filter_desc.append(f"min_price={min_price:,}")
+                filter_str = ", ".join(filter_desc) if filter_desc else "none"
+                print(f"  [{seller}] kept={kept}, skipped={skipped} (filter: {filter_str})")
+                print()
+        finally:
+            try:
+                browser.close()
+            except Exception:
+                pass
 
     if not all_rows:
         print("[ERROR] 저장할 상품이 없습니다.")

@@ -13,6 +13,7 @@ run_coupang_crawl.bat
 # ============================================
 .env
 .env.*
+*.env
 !.env.example
 *.pem
 *.key
