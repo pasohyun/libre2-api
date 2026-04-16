@@ -130,3 +130,33 @@ class MonthlyReportResponse(BaseModel):
 
     llm: Optional[Dict[str, Any]] = None
     generated_at: Optional[datetime] = None
+
+
+# ── Dashboard memos (업체별 / 공용 계보) ───────────────────────────────
+
+class DashboardMemoCreateGlobal(BaseModel):
+    body: str
+    summary: Optional[str] = None
+
+
+class DashboardMemoCreateVendor(BaseModel):
+    channel: str
+    vendor_label: str
+    body: str
+    summary: Optional[str] = None
+
+
+class DashboardMemoOut(BaseModel):
+    id: int
+    scope: str
+    channel: Optional[str] = None
+    vendor_label: Optional[str] = None
+    body: str
+    summary: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+class DashboardMemoListVendor(BaseModel):
+    count: int
+    items: List[DashboardMemoOut]

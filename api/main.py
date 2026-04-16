@@ -1,12 +1,13 @@
 # api/main.py
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import BackgroundTasks, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.routers import health, products
-from api.routers import reports
-from api.database import init_db  # 테이블 자동 생성
+
 from api import scheduler
+from api.auth_dashboard import require_dashboard_auth
+from api.database import init_db  # 테이블 자동 생성
+from api.routers import auth_dashboard, health, memos, products, reports
 
 
 @asynccontextmanager
@@ -40,7 +41,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.post("/crawl/trigger", tags=["crawl"])
+@app.post(
+    "/crawl/trigger",
+    tags=["crawl"],
+    dependencies=[Depends(require_dashboard_auth)],
+)
 async def trigger_crawl(background_tasks: BackgroundTasks):
     """수동으로 쿠팡 크롤링 즉시 실행"""
     scheduler.run_now()
@@ -58,5 +63,7 @@ def root():
     }
 
 app.include_router(health.router)
-app.include_router(products.router)
-app.include_router(reports.router)
+app.include_router(auth_dashboard.router)
+app.include_router(products.router, dependencies=[Depends(require_dashboard_auth)])
+app.include_router(reports.router, dependencies=[Depends(require_dashboard_auth)])
+app.include_router(memos.router, dependencies=[Depends(require_dashboard_auth)])

@@ -157,6 +157,23 @@ def init_db():
         """
     )
 
+    create_dashboard_memos_sql = text(
+        """
+        CREATE TABLE IF NOT EXISTS dashboard_memos (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            scope VARCHAR(20) NOT NULL,
+            channel VARCHAR(50) NULL,
+            vendor_label VARCHAR(255) NULL,
+            body LONGTEXT NOT NULL,
+            summary VARCHAR(500) NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_scope_created (scope, created_at),
+            INDEX idx_vendor (scope, channel, vendor_label)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """
+    )
+
     create_monthly_reports_sql = text(
         """
         CREATE TABLE IF NOT EXISTS monthly_reports (
@@ -181,6 +198,7 @@ def init_db():
         with engine.connect() as conn:
             conn.execute(create_products_sql)
             conn.execute(create_monthly_metrics_sql)
+            conn.execute(create_dashboard_memos_sql)
             conn.execute(create_monthly_reports_sql)
 
             _safe_alter(conn, "ALTER TABLE products ADD COLUMN snapshot_id VARCHAR(40) NULL")
@@ -192,6 +210,6 @@ def init_db():
             _normalize_mall_names(conn)
             conn.commit()
 
-        print("✅ Database initialized successfully (products + monthly report tables)")
+        print("✅ Database initialized successfully (products + memos + monthly report tables)")
     except Exception as e:
         print(f"⚠️ Warning: Could not initialize database tables: {e}")
