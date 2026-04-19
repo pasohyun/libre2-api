@@ -227,6 +227,28 @@ async function fetchMallTimeline(mallName, days = 30, channel) {
   }
 }
 
+async function fetchMallPriceInsights(mallName, days = 30, channel) {
+  const params = new URLSearchParams({
+    mall_name: mallName,
+    days: String(days),
+  });
+  if (channel) params.set("channel", channel);
+  const response = await authFetch(
+    `${API_BASE}/products/mall/price-insights?${params.toString()}`,
+  );
+  if (!response.ok) {
+    let detail = `API error: ${response.status}`;
+    try {
+      const err = await response.json();
+      if (err?.detail) detail = String(err.detail);
+    } catch {
+      // ignore
+    }
+    throw new Error(detail);
+  }
+  return await response.json();
+}
+
 async function generateCardImageOnDemand(productId) {
   try {
     const response = await authFetch(
@@ -4636,6 +4658,9 @@ function SellerDetail({
   const [vmSummary, setVmSummary] = useState("");
   const [vmBody, setVmBody] = useState("");
   const [vmSaving, setVmSaving] = useState(false);
+  const [priceInsights, setPriceInsights] = useState(null);
+  const [priceInsightsLoading, setPriceInsightsLoading] = useState(true);
+  const [priceInsightsError, setPriceInsightsError] = useState(null);
 
   // API에서 셀러 타임라인 데이터 로드
   useEffect(() => {
@@ -4670,6 +4695,30 @@ function SellerDetail({
       cancelled = true;
     };
   }, [channelKey, sellerName]);
+
+  const reloadPriceInsights = useCallback(
+    async ({ silent } = {}) => {
+      if (!silent) {
+        setPriceInsightsLoading(true);
+        setPriceInsightsError(null);
+      }
+      try {
+        const data = await fetchMallPriceInsights(sellerName, 30, channelKey);
+        setPriceInsights(data);
+        setPriceInsightsError(null);
+      } catch (e) {
+        setPriceInsights(null);
+        setPriceInsightsError(String(e?.message || e));
+      } finally {
+        if (!silent) setPriceInsightsLoading(false);
+      }
+    },
+    [sellerName, channelKey],
+  );
+
+  useEffect(() => {
+    reloadPriceInsights({ silent: false });
+  }, [reloadPriceInsights]);
 
   const timeline = timelineData;
   const latestSellerUrl = useMemo(() => {
@@ -4963,6 +5012,7 @@ function SellerDetail({
           } else {
             const refreshed = await fetchMallTimeline(sellerName, 30, channelKey);
             if (refreshed?.data) setTimelineData(refreshed.data);
+            void reloadPriceInsights({ silent: true });
             setManualModalOpen(false);
             setManualTarget(null);
             setManualQtyInput("");
@@ -5072,6 +5122,156 @@ function SellerDetail({
           </Card>
         </div>
       </div>
+
+      <Card
+        title="가격 분석 (통계)"
+        right={
+          <div className="flex items-center gap-2">
+            {priceInsightsLoading ? (
+              <span className="text-xs text-slate-500">분석 중…</span>
+            ) : null}
+            <button
+              type="button"
+              disabled={priceInsightsLoading}
+              onClick={() => reloadPriceInsights({ silent: false })}
+              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+            >
+              새로고침
+            </button>
+          </div>
+        }
+      >
+        {priceInsightsError ? (
+          <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-800">
+            분석을 불러오지 못했습니다. {priceInsightsError}
+          </div>
+        ) : null}
+        {priceInsightsLoading && !priceInsights && !priceInsightsError ? (
+          <p className="text-sm text-slate-500">분석 결과를 불러오는 중입니다…</p>
+        ) : null}
+        {!priceInsightsError && priceInsights ? (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">
+              최근 <span className="font-semibold text-slate-900">{priceInsights.days}일</span>
+              {" · "}
+              스냅샷 시계열{" "}
+              <span className="font-semibold text-slate-900">
+                {priceInsights.observation_count}
+              </span>
+              개 (채널 필터와 타임라인 API와 동일)
+            </p>
+            {priceInsights.algorithm?.snapshots_per_day_assumed != null ? (
+              <p className="text-xs text-slate-500">
+                운영 스케줄 가정: 하루{" "}
+                <span className="font-medium text-slate-700">
+                  {priceInsights.algorithm.snapshots_per_day_assumed}회
+                </span>{" "}
+                스냅샷 · 이상치 베이스라인 롤링 약{" "}
+                <span className="font-medium text-slate-700">
+                  {priceInsights.algorithm.rolling_median_days}일
+                </span>{" "}
+                ({priceInsights.algorithm.rolling_median_snapshots}개 시점)
+              </p>
+            ) : null}
+            {priceInsights.observation_count === 0 ? (
+              <p className="text-sm text-slate-500">
+                이 기간·채널에서 분석할 스냅샷 요약 데이터가 없습니다.
+              </p>
+            ) : null}
+            {priceInsights.forecast ? (
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
+                  단기 추세 (다음 1스텝 외삽)
+                </div>
+                <div className="mt-2 flex flex-wrap items-baseline gap-2">
+                  <span className="text-2xl font-bold text-slate-900">
+                    {formatKRW(Math.round(priceInsights.forecast.predicted_min_price))}
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    참고 구간 {formatKRW(Math.round(priceInsights.forecast.pred_low))} ~{" "}
+                    {formatKRW(Math.round(priceInsights.forecast.pred_high))}
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {priceInsights.forecast.method ===
+                  "statsmodels_exponential_smoothing_holt_additive"
+                    ? `최근 ${priceInsights.forecast.window}개 스냅샷 · Holt 가법 지수평활(추세 가산)`
+                    : `최근 ${priceInsights.forecast.window}개 스냅샷 · 선형 추세 OLS(폴백)`}
+                  {" · RMSE "}
+                  {priceInsights.forecast.rmse != null
+                    ? Math.round(priceInsights.forecast.rmse).toLocaleString("ko-KR")
+                    : "-"}
+                </div>
+              </div>
+            ) : priceInsights.observation_count > 0 ? (
+              <p className="text-sm text-slate-500">
+                관측이 적어(5개 미만) 단기 추세 추정은 생략되었습니다.
+              </p>
+            ) : null}
+            {priceInsights.anomalies?.length > 0 ? (
+              <div>
+                <div className="mb-2 text-sm font-semibold text-slate-800">
+                  통계적 급변 스냅샷 ({priceInsights.anomalies.length}건)
+                </div>
+                <div className="overflow-x-auto rounded-lg border border-slate-200">
+                  <table className="min-w-full text-left text-sm">
+                    <thead className="border-b border-slate-200 bg-slate-50 text-xs text-slate-600">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">시각</th>
+                        <th className="px-3 py-2 font-medium">유형</th>
+                        <th className="px-3 py-2 text-right font-medium">최저 단가</th>
+                        <th className="px-3 py-2 text-right font-medium">베이스라인</th>
+                        <th className="px-3 py-2 text-right font-medium">modified z</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {priceInsights.anomalies.map((a, idx) => (
+                        <tr key={`${a.ts}-${idx}`} className="bg-white">
+                          <td className="whitespace-nowrap px-3 py-2 text-slate-800">
+                            {formatDateTimeKST(a.ts)}
+                          </td>
+                          <td className="px-3 py-2">
+                            {a.kind === "sharp_drop" ? (
+                              <Badge tone="danger">급락</Badge>
+                            ) : a.kind === "sharp_rise" ? (
+                              <Badge tone="warning">급등</Badge>
+                            ) : (
+                              <span className="text-slate-500">{a.kind || "-"}</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right font-medium tabular-nums">
+                            {formatKRW(a.min_price)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-slate-600">
+                            {a.baseline != null ? formatKRW(Math.round(a.baseline)) : "—"}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-slate-600">
+                            {a.modified_z != null ? Number(a.modified_z).toFixed(2) : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : priceInsights.observation_count > 0 ? (
+              <p className="text-sm text-slate-600">
+                급락·급등으로 표시된 스냅샷은 없습니다. (잔차 기반 modified z-score가 임계값
+                미만)
+              </p>
+            ) : null}
+            {priceInsights.algorithm ? (
+              <p className="text-xs leading-relaxed text-slate-400">
+                알고리즘: 이상치 {priceInsights.algorithm.anomaly ?? "-"} · 예측{" "}
+                {priceInsights.algorithm.forecast ?? "-"}
+                {priceInsights.algorithm.reference
+                  ? ` · ${priceInsights.algorithm.reference}`
+                  : ""}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </Card>
 
       <Card
         title={`판매처 메모 · ${displaySellerName(channelKey, sellerName)}`}
@@ -5218,6 +5418,7 @@ function SellerDetail({
                 setSelectedProductIds(new Set());
                 const refreshed = await fetchMallTimeline(sellerName, 30, channelKey);
                 if (refreshed?.data) setTimelineData(refreshed.data);
+                void reloadPriceInsights({ silent: true });
                 setDeletingRows(false);
               }}
             >

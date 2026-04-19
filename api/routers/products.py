@@ -4,7 +4,13 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from api.database import SessionLocal
-from api.schemas import ProductListResponse
+from api.schemas import (
+    MallPriceInsightsResponse,
+    PriceAnomalyItem,
+    PriceForecastBlock,
+    ProductListResponse,
+)
+from api.services.price_analytics import build_mall_price_insights, fetch_mall_min_price_series
 from datetime import datetime, timedelta
 import io
 
@@ -209,54 +215,84 @@ def get_latest_products(db: Session = Depends(get_db)):
     - 네이버 쪽은 쿠팡 브랜드 스냅샷과 (product_name, quantity)가 겹치면 제외한다.
       단, 쇼핑 API의 '네이버(최저가비교)' 집계 행은 스마트스토어 직접 행과 다른 가격을
       담을 수 있으므로 제외 규칙에서 항상 포함한다.
+
+    과거 데이터에 snapshot_id가 없으면(전부 NULL) 최신 수집 시각 한 점으로 묶어 폴백한다.
     """
     try:
-        rows = db.execute(text("""
-            WITH latest_naver AS (
-                SELECT snapshot_id
-                FROM products
-                WHERE snapshot_id IS NOT NULL
-                  AND market != '쿠팡'
-                ORDER BY snapshot_id DESC
-                LIMIT 1
-            ),
-            latest_coupang_brand AS (
-                SELECT snapshot_id
-                FROM products
-                WHERE snapshot_id IS NOT NULL
-                  AND market = '쿠팡'
-                ORDER BY snapshot_id DESC
-                LIMIT 1
-            ),
-            coupang_brand_keys AS (
-                SELECT product_name, quantity
-                FROM products
-                WHERE snapshot_id = (SELECT snapshot_id FROM latest_coupang_brand)
-            )
-            SELECT
-                p.id,
-                keyword, product_name, unit_price, quantity, total_price,
-                mall_name, calc_method, link,
-                p.image_url AS image_url,
-                card_image_path,
-                p.channel, market,
-                COALESCE(p.snapshot_at, p.created_at) AS snapshot_time
-            FROM products p
-            WHERE (
-                p.snapshot_id = (SELECT snapshot_id FROM latest_coupang_brand)
-            ) OR (
-                p.snapshot_id = (SELECT snapshot_id FROM latest_naver)
-                AND (
-                    TRIM(p.mall_name) IN ('최저가비교', '네이버')
-                    OR NOT EXISTS (
-                        SELECT 1 FROM coupang_brand_keys cb
-                        WHERE cb.product_name = p.product_name
-                          AND cb.quantity = p.quantity
+        snap_cnt = int(
+            db.execute(
+                text("SELECT COUNT(*) FROM products WHERE snapshot_id IS NOT NULL")
+            ).scalar()
+            or 0
+        )
+
+        if snap_cnt > 0:
+            rows = db.execute(text("""
+                WITH latest_naver AS (
+                    SELECT snapshot_id
+                    FROM products
+                    WHERE snapshot_id IS NOT NULL
+                      AND market != '쿠팡'
+                    ORDER BY snapshot_id DESC
+                    LIMIT 1
+                ),
+                latest_coupang_brand AS (
+                    SELECT snapshot_id
+                    FROM products
+                    WHERE snapshot_id IS NOT NULL
+                      AND market = '쿠팡'
+                    ORDER BY snapshot_id DESC
+                    LIMIT 1
+                ),
+                coupang_brand_keys AS (
+                    SELECT product_name, quantity
+                    FROM products
+                    WHERE snapshot_id = (SELECT snapshot_id FROM latest_coupang_brand)
+                )
+                SELECT
+                    p.id,
+                    keyword, product_name, unit_price, quantity, total_price,
+                    mall_name, calc_method, link,
+                    p.image_url AS image_url,
+                    card_image_path,
+                    p.channel, market,
+                    COALESCE(p.snapshot_at, p.created_at) AS snapshot_time
+                FROM products p
+                WHERE (
+                    p.snapshot_id = (SELECT snapshot_id FROM latest_coupang_brand)
+                ) OR (
+                    p.snapshot_id = (SELECT snapshot_id FROM latest_naver)
+                    AND (
+                        TRIM(p.mall_name) IN ('최저가비교', '네이버')
+                        OR NOT EXISTS (
+                            SELECT 1 FROM coupang_brand_keys cb
+                            WHERE cb.product_name = p.product_name
+                              AND cb.quantity = p.quantity
+                        )
                     )
                 )
-            )
-            ORDER BY unit_price ASC
-        """)).mappings().all()
+                ORDER BY unit_price ASC
+            """)).mappings().all()
+        else:
+            # snapshot_id 없는 구 DB / 로컬 덤프: 가장 최근 수집 시각의 행만 반환
+            rows = db.execute(text("""
+                WITH latest_ts AS (
+                    SELECT MAX(COALESCE(snapshot_at, created_at)) AS ts FROM products
+                )
+                SELECT
+                    p.id,
+                    keyword, product_name, unit_price, quantity, total_price,
+                    mall_name, calc_method, link,
+                    p.image_url AS image_url,
+                    card_image_path,
+                    p.channel, market,
+                    COALESCE(p.snapshot_at, p.created_at) AS snapshot_time
+                FROM products p
+                CROSS JOIN latest_ts lt
+                WHERE lt.ts IS NOT NULL
+                  AND COALESCE(p.snapshot_at, p.created_at) = lt.ts
+                ORDER BY unit_price ASC
+            """)).mappings().all()
 
         data = []
         for r in rows:
@@ -985,6 +1021,44 @@ def get_mall_timeline(
     except Exception as e:
         import traceback
         print(f"Error in get_mall_timeline: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@router.get("/mall/price-insights", response_model=MallPriceInsightsResponse)
+def get_mall_price_insights(
+    mall_name: str = Query(..., description="판매처 이름 (mall/timeline과 동일)"),
+    days: int = Query(30, ge=1, le=90, description="조회 기간 (일)"),
+    channel: str = Query(None, description="채널 필터 (naver, coupang, others)"),
+    db: Session = Depends(get_db),
+):
+    """
+    판매처별 스냅샷 최저가 시계열에 대한 분석 레이어.
+
+    - 이상 탐지: 지연 롤링 중앙값 대비 잔차의 MAD 기반 modified z-score
+      (급락 sharp_drop / 급등 sharp_rise).
+    - 단기 예측: 최근 관측 구간 OLS 선형 추세 1스텝 외삽 + 잔차 기반 대략 구간.
+    """
+    try:
+        mall_key = _to_public_mall_name(mall_name)
+        db_mall_name_list = _mall_name_candidates(mall_name)
+        df = fetch_mall_min_price_series(
+            db, mall_name_list=db_mall_name_list, days=days, channel=channel
+        )
+        core = build_mall_price_insights(df)
+        fc = core.get("forecast")
+        forecast_block = PriceForecastBlock(**fc) if fc else None
+        return MallPriceInsightsResponse(
+            mall_name=mall_key,
+            days=days,
+            channel=channel,
+            observation_count=core["observation_count"],
+            anomalies=[PriceAnomalyItem(**a) for a in core["anomalies"]],
+            forecast=forecast_block,
+            algorithm=core["algorithm"],
+        )
+    except Exception as e:
+        import traceback
+        print(f"Error in get_mall_price_insights: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 

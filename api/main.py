@@ -31,6 +31,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",  # 로컬 개발
         "http://localhost:5173",  # Vite 로컬
+        "http://127.0.0.1:5173",  # Vite 로컬(127.0.0.1은 localhost와 origin이 다름)
         "https://libre-price-monitor-client.vercel.app",  # Vercel Production 도메인 (기존)
         "https://libre-price-monitor-client-quz71ujve-libre2-monitoring.vercel.app",  # Vercel Pro팀 도메인
         "https://*.vercel.app",   # Vercel 모든 프리뷰 도메인

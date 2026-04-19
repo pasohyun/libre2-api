@@ -204,6 +204,8 @@ def init_db():
             _safe_alter(conn, "ALTER TABLE products ADD COLUMN snapshot_id VARCHAR(40) NULL")
             _safe_alter(conn, "ALTER TABLE products ADD COLUMN snapshot_at DATETIME NULL")
             _safe_alter(conn, "ALTER TABLE products ADD COLUMN calc_valid TINYINT(1) DEFAULT 1")
+            _safe_alter(conn, "ALTER TABLE products ADD COLUMN channel VARCHAR(50) NULL")
+            _safe_alter(conn, "ALTER TABLE products ADD COLUMN market VARCHAR(100) NULL")
             _safe_alter(conn, "CREATE INDEX idx_snapshot_at ON products(snapshot_at)")
             _safe_alter(conn, "CREATE INDEX idx_snapshot_id ON products(snapshot_id)")
 
