@@ -194,12 +194,43 @@ def init_db():
         """
     )
 
+    create_alert_settings_sql = text(
+        """
+        CREATE TABLE IF NOT EXISTS alert_settings (
+            id INT PRIMARY KEY,
+            enabled TINYINT(1) NOT NULL DEFAULT 0,
+            recipient_email VARCHAR(255) NOT NULL,
+            threshold_price INT NOT NULL,
+            source_times_kst VARCHAR(100) NOT NULL DEFAULT '00:00,12:00',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """
+    )
+
+    create_alert_delivery_logs_sql = text(
+        """
+        CREATE TABLE IF NOT EXISTS alert_delivery_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            target_date DATE NOT NULL,
+            recipient_email VARCHAR(255) NOT NULL,
+            threshold_price INT NOT NULL,
+            mall_count INT NOT NULL DEFAULT 0,
+            sent_at DATETIME NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_alert_daily_send (target_date, recipient_email, threshold_price)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """
+    )
+
     try:
         with engine.connect() as conn:
             conn.execute(create_products_sql)
             conn.execute(create_monthly_metrics_sql)
             conn.execute(create_dashboard_memos_sql)
             conn.execute(create_monthly_reports_sql)
+            conn.execute(create_alert_settings_sql)
+            conn.execute(create_alert_delivery_logs_sql)
 
             _safe_alter(conn, "ALTER TABLE products ADD COLUMN snapshot_id VARCHAR(40) NULL")
             _safe_alter(conn, "ALTER TABLE products ADD COLUMN snapshot_at DATETIME NULL")
@@ -212,6 +243,6 @@ def init_db():
             _normalize_mall_names(conn)
             conn.commit()
 
-        print("✅ Database initialized successfully (products + memos + monthly report tables)")
+        print("✅ Database initialized successfully (products + memos + reports + alerts tables)")
     except Exception as e:
         print(f"⚠️ Warning: Could not initialize database tables: {e}")

@@ -5,6 +5,7 @@ import { Routes, Route, useLocation, useNavigate } from "react-router-dom";
 import MonthlyReportPage from "./pages/MonthlyReportPage";
 import RangeReportPage from "./pages/RangeReportPage";
 import RawDataExportPage from "./pages/RawDataExportPage";
+import AlertSettingsPage from "./pages/AlertSettingsPage";
 
 import {
   LineChart,
@@ -5906,6 +5907,12 @@ export default function App() {
             >
               {"원본 DB\n엑셀"}
             </HeaderNavButton>
+            <HeaderNavButton
+              active={location.pathname === "/alerts"}
+              onClick={() => navigate("/alerts")}
+            >
+              {"알람\n설정"}
+            </HeaderNavButton>
           </div>
           {hasToken ? (
             <button
@@ -6063,6 +6070,17 @@ export default function App() {
                   <GhostButton onClick={goMainDashboard}>← 메인으로</GhostButton>
                 </div>
                 <RawDataExportPage />
+              </div>
+            }
+          />
+          <Route
+            path="/alerts"
+            element={
+              <div className="space-y-3">
+                <div className="flex justify-end">
+                  <GhostButton onClick={goMainDashboard}>← 메인으로</GhostButton>
+                </div>
+                <AlertSettingsPage />
               </div>
             }
           />

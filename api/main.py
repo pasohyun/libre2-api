@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api import scheduler
 from api.auth_dashboard import require_dashboard_auth
 from api.database import init_db  # 테이블 자동 생성
-from api.routers import auth_dashboard, health, memos, products, reports
+from api.routers import alerts, auth_dashboard, health, memos, products, reports
 
 
 @asynccontextmanager
@@ -68,3 +68,4 @@ app.include_router(auth_dashboard.router)
 app.include_router(products.router, dependencies=[Depends(require_dashboard_auth)])
 app.include_router(reports.router, dependencies=[Depends(require_dashboard_auth)])
 app.include_router(memos.router, dependencies=[Depends(require_dashboard_auth)])
+app.include_router(alerts.router, dependencies=[Depends(require_dashboard_auth)])
