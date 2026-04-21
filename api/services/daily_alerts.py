@@ -233,11 +233,17 @@ def _load_image_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     env_path = os.getenv("ALERT_REPORT_FONT_PATH", "").strip()
     candidates = [
         env_path,
+        "/usr/share/fonts/truetype/noto/NotoSansKR-Regular.otf",
         "/usr/share/fonts/truetype/noto/NotoSansKR-Regular.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansKR-Regular.otf",
+        "/usr/share/fonts/truetype/noto/NotoSansKR-Regular.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKkr-Regular.otf",
         "/usr/share/fonts/truetype/noto/NotoSansCJKkr-Regular.otf",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumSquareR.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ]
     for path in candidates:
