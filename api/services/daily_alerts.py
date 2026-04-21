@@ -230,7 +230,11 @@ def _build_email_body(
 
 
 def _load_image_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    env_path = os.getenv("ALERT_REPORT_FONT_PATH", "").strip()
     candidates = [
+        env_path,
+        "/usr/share/fonts/truetype/noto/NotoSansKR-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansCJKkr-Regular.otf",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
@@ -386,7 +390,17 @@ def _build_report_image_png(
             outline=(203, 213, 225),
             width=1,
         )
-        draw.text((row_x + 8, y + 6), h, font=font_small, fill=(30, 41, 59))
+        if idx == 4:
+            hb = draw.textbbox((0, 0), h, font=font_small)
+            hw = hb[2] - hb[0]
+            draw.text(
+                (row_x + (widths[idx] - hw) / 2, y + 6),
+                h,
+                font=font_small,
+                fill=(30, 41, 59),
+            )
+        else:
+            draw.text((row_x + 8, y + 6), h, font=font_small, fill=(30, 41, 59))
         row_x += widths[idx]
     y += row_height
 
@@ -408,7 +422,17 @@ def _build_report_image_png(
                     outline=(226, 232, 240),
                     width=1,
                 )
-                draw.text((row_x + 8, y + 7), value, font=font_small, fill=(15, 23, 42))
+                if idx == 4:
+                    vb = draw.textbbox((0, 0), value, font=font_small)
+                    vw = vb[2] - vb[0]
+                    draw.text(
+                        (row_x + (widths[idx] - vw) / 2, y + 7),
+                        value,
+                        font=font_small,
+                        fill=(15, 23, 42),
+                    )
+                else:
+                    draw.text((row_x + 8, y + 7), value, font=font_small, fill=(15, 23, 42))
                 row_x += widths[idx]
             y += row_height
     else:
