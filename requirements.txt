@@ -33,3 +33,4 @@ openpyxl  # products 원본 엑셀보내기
 # -----------------------
 python-dateutil
 schedule
+Pillow  # 알람 리포트 이미지를 PNG 첨부로 생성

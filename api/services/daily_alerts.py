@@ -4,10 +4,13 @@ import os
 import smtplib
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from io import BytesIO
 from typing import Any
 
+from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -226,7 +229,225 @@ def _build_email_body(
     return text_body, html_body
 
 
-def _send_email(*, recipients: list[str], subject: str, text_body: str, html_body: str) -> None:
+def _load_image_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    candidates = [
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size=size)
+            except Exception:
+                continue
+    return ImageFont.load_default()
+
+
+def _draw_wrapped_text(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    x: int,
+    y: int,
+    max_width: int,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    fill: tuple[int, int, int],
+    line_height: int,
+) -> int:
+    words = (text or "").split(" ")
+    if not words:
+        return y + line_height
+    line = ""
+    for w in words:
+        candidate = (line + " " + w).strip()
+        bbox = draw.textbbox((0, 0), candidate, font=font)
+        width = bbox[2] - bbox[0]
+        if width <= max_width or not line:
+            line = candidate
+            continue
+        draw.text((x, y), line, font=font, fill=fill)
+        y += line_height
+        line = w
+    if line:
+        draw.text((x, y), line, font=font, fill=fill)
+        y += line_height
+    return y
+
+
+def _build_report_image_png(
+    *,
+    target_date: date,
+    threshold_price: int,
+    report: dict[str, Any],
+) -> bytes:
+    summary = report.get("summary") or {}
+    below = report.get("below_threshold_list") or []
+    top5 = summary.get("top5_lowest") or []
+
+    width = 1200
+    padding = 36
+    line_height = 30
+    section_gap = 26
+    row_height = 34
+    max_rows = 35
+    shown_rows = below[:max_rows]
+
+    base_rows = 14 + len(top5) + len(shown_rows)
+    height = max(900, padding * 2 + base_rows * line_height + 240)
+
+    image = Image.new("RGB", (width, height), (248, 250, 252))
+    draw = ImageDraw.Draw(image)
+    font_title = _load_image_font(36)
+    font_h2 = _load_image_font(26)
+    font_body = _load_image_font(20)
+    font_small = _load_image_font(17)
+
+    content_x = padding
+    content_w = width - (padding * 2)
+    y = padding
+
+    draw.text(
+        (content_x, y),
+        f"Libre2 일일 모니터링 리포트 ({target_date:%Y-%m-%d})",
+        font=font_title,
+        fill=(15, 23, 42),
+    )
+    y += 52
+    draw.text(
+        (content_x, y),
+        f"기준가: {threshold_price:,}원",
+        font=font_h2,
+        fill=(30, 41, 59),
+    )
+    y += 52
+
+    draw.text((content_x, y), "① 요약", font=font_h2, fill=(30, 64, 175))
+    y += 40
+    y = _draw_wrapped_text(
+        draw,
+        f"- 기준가 이하 셀러 수: {int(summary.get('below_threshold_seller_count') or 0)}곳",
+        content_x,
+        y,
+        content_w,
+        font_body,
+        (15, 23, 42),
+        line_height,
+    )
+    if summary.get("global_min_price") is not None:
+        y = _draw_wrapped_text(
+            draw,
+            "- 최저 단가: "
+            f"{int(summary.get('global_min_price') or 0):,}원 "
+            f"({summary.get('global_min_seller') or '-'}) @ {summary.get('global_min_time') or '-'}",
+            content_x,
+            y,
+            content_w,
+            font_body,
+            (15, 23, 42),
+            line_height,
+        )
+    if top5:
+        y = _draw_wrapped_text(
+            draw,
+            "- 최저가격 상위 5개 거래처",
+            content_x,
+            y,
+            content_w,
+            font_body,
+            (15, 23, 42),
+            line_height,
+        )
+        for item in top5:
+            y = _draw_wrapped_text(
+                draw,
+                f"  · {item.get('seller_name') or '-'}: "
+                f"{int(item.get('min_unit_price') or 0):,}원 "
+                f"({item.get('platform') or '-'}) @ {item.get('min_time') or '-'}",
+                content_x + 18,
+                y,
+                content_w - 18,
+                font_body,
+                (51, 65, 85),
+                line_height,
+            )
+
+    y += section_gap
+    draw.text((content_x, y), "② 기준가 이하 리스트", font=font_h2, fill=(30, 64, 175))
+    y += 44
+
+    headers = ["판매처", "채널", "최저 단가", "총 금액", "수량", "시점"]
+    widths = [280, 140, 170, 170, 100, content_w - (280 + 140 + 170 + 170 + 100)]
+    row_x = content_x
+    for idx, h in enumerate(headers):
+        draw.rectangle(
+            [row_x, y, row_x + widths[idx], y + row_height],
+            fill=(226, 232, 240),
+            outline=(203, 213, 225),
+            width=1,
+        )
+        draw.text((row_x + 8, y + 6), h, font=font_small, fill=(30, 41, 59))
+        row_x += widths[idx]
+    y += row_height
+
+    if shown_rows:
+        for item in shown_rows:
+            row_x = content_x
+            values = [
+                str(item.get("seller_name") or "-"),
+                str(item.get("platform") or "-"),
+                f"{int(item.get('unit_price') or 0):,}원",
+                f"{int(item.get('total_price') or 0):,}원",
+                str(int(item.get("quantity") or 0)),
+                str(item.get("time") or "-"),
+            ]
+            for idx, value in enumerate(values):
+                draw.rectangle(
+                    [row_x, y, row_x + widths[idx], y + row_height],
+                    fill=(255, 255, 255),
+                    outline=(226, 232, 240),
+                    width=1,
+                )
+                draw.text((row_x + 8, y + 7), value, font=font_small, fill=(15, 23, 42))
+                row_x += widths[idx]
+            y += row_height
+    else:
+        draw.rectangle(
+            [content_x, y, content_x + content_w, y + row_height],
+            fill=(255, 255, 255),
+            outline=(226, 232, 240),
+            width=1,
+        )
+        draw.text(
+            (content_x + 8, y + 7),
+            "기준가 이하 거래처가 없습니다.",
+            font=font_small,
+            fill=(71, 85, 105),
+        )
+        y += row_height
+
+    if len(below) > max_rows:
+        y += 16
+        draw.text(
+            (content_x, y),
+            f"* 이미지에는 상위 {max_rows}건만 표시되었습니다. 전체 건수: {len(below)}건",
+            font=font_small,
+            fill=(100, 116, 139),
+        )
+
+    output = BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
+def _send_email(
+    *,
+    recipients: list[str],
+    subject: str,
+    text_body: str,
+    html_body: str,
+    report_image_png: bytes | None = None,
+) -> None:
     host = os.getenv("ALERT_SMTP_HOST", "").strip()
     user = os.getenv("ALERT_SMTP_USER", "").strip()
     password = os.getenv("ALERT_SMTP_PASSWORD", "").strip()
@@ -240,12 +461,22 @@ def _send_email(*, recipients: list[str], subject: str, text_body: str, html_bod
             "SMTP 설정이 없습니다. ALERT_SMTP_HOST/USER/PASSWORD 환경변수를 확인하세요."
         )
 
-    msg = MIMEMultipart("alternative")
+    msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
     msg["From"] = mail_from
     msg["To"] = ", ".join(recipients)
-    msg.attach(MIMEText(text_body, "plain", "utf-8"))
-    msg.attach(MIMEText(html_body, "html", "utf-8"))
+    alt = MIMEMultipart("alternative")
+    alt.attach(MIMEText(text_body, "plain", "utf-8"))
+    alt.attach(MIMEText(html_body, "html", "utf-8"))
+    msg.attach(alt)
+    if report_image_png:
+        image_part = MIMEImage(report_image_png, _subtype="png")
+        image_part.add_header(
+            "Content-Disposition",
+            "attachment",
+            filename=f"libre2-report-{datetime.now(KST):%Y%m%d}.png",
+        )
+        msg.attach(image_part)
 
     with smtplib.SMTP(host, port, timeout=20) as server:
         if use_tls:
@@ -308,6 +539,11 @@ def run_daily_alert_job(reference_now: datetime | None = None) -> dict[str, Any]
             subject=subject,
             text_body=text_body,
             html_body=html_body,
+            report_image_png=_build_report_image_png(
+                target_date=target_date,
+                threshold_price=conf.threshold_price,
+                report=report,
+            ),
         )
 
         db.execute(
