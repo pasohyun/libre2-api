@@ -199,13 +199,15 @@ def _send_email(*, recipient: str, subject: str, text_body: str, html_body: str)
     host = os.getenv("ALERT_SMTP_HOST", "").strip()
     user = os.getenv("ALERT_SMTP_USER", "").strip()
     password = os.getenv("ALERT_SMTP_PASSWORD", "").strip()
-    mail_from = os.getenv("ALERT_FROM_EMAIL", user).strip()
+    # 발신 주소는 SMTP 로그인 계정과 동일 (Gmail 등에서 권장). Railpack이 *_EMAIL 변수를
+    # 빌드 시크릿으로 잡아 배포가 실패하는 경우가 있어 ALERT_FROM_EMAIL은 사용하지 않음.
+    mail_from = user
     port = int(os.getenv("ALERT_SMTP_PORT", "587"))
     use_tls = os.getenv("ALERT_SMTP_USE_TLS", "true").lower() == "true"
 
     if not host or not user or not password or not mail_from:
         raise RuntimeError(
-            "SMTP 설정이 없습니다. ALERT_SMTP_HOST/USER/PASSWORD/FROM_EMAIL 환경변수를 확인하세요."
+            "SMTP 설정이 없습니다. ALERT_SMTP_HOST/USER/PASSWORD 환경변수를 확인하세요."
         )
 
     msg = MIMEMultipart("alternative")
