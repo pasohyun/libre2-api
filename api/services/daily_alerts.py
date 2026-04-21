@@ -485,7 +485,11 @@ def _send_email(
         server.sendmail(mail_from, recipients, msg.as_string())
 
 
-def run_daily_alert_job(reference_now: datetime | None = None) -> dict[str, Any]:
+def run_daily_alert_job(
+    reference_now: datetime | None = None,
+    *,
+    force_send: bool = False,
+) -> dict[str, Any]:
     now_kst = (reference_now or datetime.now(KST)).astimezone(KST)
     target_date = (now_kst - timedelta(days=1)).date()
 
@@ -499,25 +503,26 @@ def run_daily_alert_job(reference_now: datetime | None = None) -> dict[str, Any]
             return {"status": "skipped", "reason": "recipient_empty"}
         recipient_key = ",".join(conf.recipient_emails)
 
-        exists = db.execute(
-            text(
-                """
-                SELECT id
-                FROM alert_delivery_logs
-                WHERE target_date = :target_date
-                  AND recipient_email = :recipient_email
-                  AND threshold_price = :threshold_price
-                LIMIT 1
-                """
-            ),
-            {
-                "target_date": target_date.strftime("%Y-%m-%d"),
-                "recipient_email": recipient_key,
-                "threshold_price": conf.threshold_price,
-            },
-        ).first()
-        if exists:
-            return {"status": "skipped", "reason": "already_sent", "target_date": str(target_date)}
+        if not force_send:
+            exists = db.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM alert_delivery_logs
+                    WHERE target_date = :target_date
+                      AND recipient_email = :recipient_email
+                      AND threshold_price = :threshold_price
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "target_date": target_date.strftime("%Y-%m-%d"),
+                    "recipient_email": recipient_key,
+                    "threshold_price": conf.threshold_price,
+                },
+            ).first()
+            if exists:
+                return {"status": "skipped", "reason": "already_sent", "target_date": str(target_date)}
 
         report = build_range_report(
             db,
@@ -572,4 +577,5 @@ def run_daily_alert_job(reference_now: datetime | None = None) -> dict[str, Any]
             "recipient_emails": conf.recipient_emails,
             "threshold_price": conf.threshold_price,
             "mall_count": len(below),
+            "force_send": force_send,
         }

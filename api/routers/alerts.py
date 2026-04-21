@@ -49,6 +49,6 @@ def put_alert_config(body: AlertConfigUpsertBody, db: Session = Depends(get_db))
 @router.post("/trigger")
 def trigger_daily_alert():
     try:
-        return run_daily_alert_job()
+        return run_daily_alert_job(force_send=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"alert send failed: {str(e)}") from e
