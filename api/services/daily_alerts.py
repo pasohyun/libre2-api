@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 import config
 from api.database import SessionLocal
+from api.services.range_report_builder import build_range_report
 
 KST = timezone(timedelta(hours=9))
 
@@ -120,37 +121,6 @@ def upsert_alert_config(
     return get_alert_config_dict(db)
 
 
-def _fetch_below_threshold_rows(
-    db: Session,
-    *,
-    target_date: date,
-    threshold_price: int,
-    source_times_kst: list[str],
-) -> list[dict[str, Any]]:
-    rows = db.execute(
-        text(
-            """
-            SELECT
-                p.mall_name,
-                MIN(p.unit_price) AS min_unit_price,
-                MIN(COALESCE(p.snapshot_at, p.created_at)) AS first_seen_at
-            FROM products p
-            WHERE DATE(COALESCE(p.snapshot_at, p.created_at)) = :target_date
-              AND TIME_FORMAT(COALESCE(p.snapshot_at, p.created_at), '%H:%i') IN :source_times
-              AND p.unit_price < :threshold_price
-            GROUP BY p.mall_name
-            ORDER BY min_unit_price ASC, mall_name ASC
-            """
-        ),
-        {
-            "target_date": target_date.strftime("%Y-%m-%d"),
-            "source_times": tuple(source_times_kst),
-            "threshold_price": threshold_price,
-        },
-    ).mappings().all()
-    return [dict(r) for r in rows]
-
-
 def _build_email_subject(target_date: date, threshold_price: int) -> str:
     return f"[Libre2 알람] {target_date:%Y-%m-%d} 기준 {threshold_price:,}원 미만 거래처"
 
@@ -159,38 +129,105 @@ def _build_email_body(
     *,
     target_date: date,
     threshold_price: int,
-    source_times_kst: list[str],
-    rows: list[dict[str, Any]],
+    report: dict[str, Any],
 ) -> tuple[str, str]:
-    time_label = ", ".join(source_times_kst)
-    if rows:
-        lines = [
-            f"- {r.get('mall_name') or '(unknown)'}: {int(r['min_unit_price']):,}원"
-            for r in rows
-        ]
-        text_body = (
-            f"{target_date:%Y-%m-%d} ({time_label} KST) 수집 데이터 기준으로\n"
-            f"셋팅가 {threshold_price:,}원 미만 거래처 목록입니다.\n\n"
-            + "\n".join(lines)
+    summary = report.get("summary") or {}
+    below = report.get("below_threshold_list") or []
+    top5 = summary.get("top5_lowest") or []
+
+    summary_lines = [
+        f"- 기준가 이하 셀러 수: {int(summary.get('below_threshold_seller_count') or 0)}곳",
+    ]
+    if summary.get("global_min_price") is not None:
+        summary_lines.append(
+            "- 최저 단가: "
+            f"{int(summary.get('global_min_price')):,}원 "
+            f"({summary.get('global_min_seller') or '-'}) @ {summary.get('global_min_time') or '-'}"
         )
-        html_rows = "".join(
-            f"<li>{(r.get('mall_name') or '(unknown)')}: {int(r['min_unit_price']):,}원</li>"
-            for r in rows
-        )
-        html_body = (
-            f"<p><strong>{target_date:%Y-%m-%d}</strong> ({time_label} KST) 수집 데이터 기준으로 "
-            f"셋팅가 <strong>{threshold_price:,}원</strong> 미만 거래처 목록입니다.</p>"
-            f"<ul>{html_rows}</ul>"
-        )
-        return text_body, html_body
+    if top5:
+        summary_lines.append("- 최저가격 상위 5개 거래처:")
+        for item in top5:
+            summary_lines.append(
+                f"  - {item.get('seller_name') or '-'}: "
+                f"{int(item.get('min_unit_price') or 0):,}원 "
+                f"({item.get('platform') or '-'}) @ {item.get('min_time') or '-'}"
+            )
+
+    detail_lines = []
+    if below:
+        for item in below:
+            detail_lines.append(
+                f"- {item.get('seller_name') or '-'} | {item.get('platform') or '-'} | "
+                f"{int(item.get('unit_price') or 0):,}원 | "
+                f"{int(item.get('total_price') or 0):,}원 | 수량 {int(item.get('quantity') or 0)} | "
+                f"{item.get('time') or '-'}"
+            )
+    else:
+        detail_lines.append("기준가 이하 거래처가 없습니다.")
 
     text_body = (
-        f"{target_date:%Y-%m-%d} ({time_label} KST) 수집 데이터 기준으로\n"
-        f"셋팅가 {threshold_price:,}원 미만 거래처가 없습니다."
+        f"{target_date:%Y-%m-%d} 기준 알람 리포트 (기준가 {threshold_price:,}원)\n\n"
+        "① 요약\n"
+        + "\n".join(summary_lines)
+        + "\n\n② 기준가 이하 리스트\n"
+        + "\n".join(detail_lines)
     )
+
+    top5_html = ""
+    if top5:
+        top5_rows = "".join(
+            "<li>"
+            f"{item.get('seller_name') or '-'}: {int(item.get('min_unit_price') or 0):,}원 "
+            f"({item.get('platform') or '-'}) @ {item.get('min_time') or '-'}"
+            "</li>"
+            for item in top5
+        )
+        top5_html = (
+            "<div style='margin-top:8px;'><strong>최저가격 상위 5개 거래처</strong>"
+            f"<ul style='margin:6px 0 0 20px;'>{top5_rows}</ul></div>"
+        )
+
+    if below:
+        detail_rows = "".join(
+            "<tr>"
+            f"<td>{item.get('seller_name') or '-'}</td>"
+            f"<td>{item.get('platform') or '-'}</td>"
+            f"<td style='text-align:right;'>{int(item.get('unit_price') or 0):,}원</td>"
+            f"<td style='text-align:right;'>{int(item.get('total_price') or 0):,}원</td>"
+            f"<td style='text-align:right;'>{int(item.get('quantity') or 0)}</td>"
+            f"<td>{item.get('time') or '-'}</td>"
+            "</tr>"
+            for item in below
+        )
+        detail_html = (
+            "<table style='border-collapse:collapse;width:100%;font-size:13px;'>"
+            "<thead><tr>"
+            "<th style='text-align:left;border-bottom:1px solid #ddd;padding:6px;'>판매처</th>"
+            "<th style='text-align:left;border-bottom:1px solid #ddd;padding:6px;'>채널</th>"
+            "<th style='text-align:right;border-bottom:1px solid #ddd;padding:6px;'>최저 단가</th>"
+            "<th style='text-align:right;border-bottom:1px solid #ddd;padding:6px;'>총 금액</th>"
+            "<th style='text-align:right;border-bottom:1px solid #ddd;padding:6px;'>수량</th>"
+            "<th style='text-align:left;border-bottom:1px solid #ddd;padding:6px;'>시점</th>"
+            "</tr></thead>"
+            f"<tbody>{detail_rows}</tbody></table>"
+        )
+    else:
+        detail_html = "<p>기준가 이하 거래처가 없습니다.</p>"
+
     html_body = (
-        f"<p><strong>{target_date:%Y-%m-%d}</strong> ({time_label} KST) 수집 데이터 기준으로 "
-        f"셋팅가 <strong>{threshold_price:,}원</strong> 미만 거래처가 없습니다.</p>"
+        f"<p><strong>{target_date:%Y-%m-%d}</strong> 기준 알람 리포트 "
+        f"(기준가 <strong>{threshold_price:,}원</strong>)</p>"
+        "<h3 style='margin:8px 0 4px;'>① 요약</h3>"
+        f"<p style='margin:0;'>기준가 이하 셀러 수: <strong>{int(summary.get('below_threshold_seller_count') or 0)}곳</strong></p>"
+        + (
+            f"<p style='margin:4px 0 0;'>최저 단가: <strong>{int(summary.get('global_min_price') or 0):,}원</strong> "
+            f"({summary.get('global_min_seller') or '-'}) @ {summary.get('global_min_time') or '-'}</p>"
+            if summary.get("global_min_price") is not None
+            else ""
+        )
+        + top5_html
+        + "<h3 style='margin:14px 0 6px;'>② 기준가 이하 리스트</h3>"
+        + detail_html
     )
     return text_body, html_body
 
@@ -256,18 +293,19 @@ def run_daily_alert_job(reference_now: datetime | None = None) -> dict[str, Any]
         if exists:
             return {"status": "skipped", "reason": "already_sent", "target_date": str(target_date)}
 
-        rows = _fetch_below_threshold_rows(
+        report = build_range_report(
             db,
-            target_date=target_date,
+            start_date=target_date.strftime("%Y-%m-%d"),
+            end_date=target_date.strftime("%Y-%m-%d"),
             threshold_price=conf.threshold_price,
-            source_times_kst=conf.source_times_kst,
+            channel="all",
         )
+        below = report.get("below_threshold_list") or []
         subject = _build_email_subject(target_date, conf.threshold_price)
         text_body, html_body = _build_email_body(
             target_date=target_date,
             threshold_price=conf.threshold_price,
-            source_times_kst=conf.source_times_kst,
-            rows=rows,
+            report=report,
         )
 
         _send_email(
@@ -292,7 +330,7 @@ def run_daily_alert_job(reference_now: datetime | None = None) -> dict[str, Any]
                 "target_date": target_date.strftime("%Y-%m-%d"),
                 "recipient_email": conf.recipient_email,
                 "threshold_price": conf.threshold_price,
-                "mall_count": len(rows),
+                "mall_count": len(below),
                 "sent_at": now_kst.replace(tzinfo=None),
             },
         )
@@ -302,6 +340,6 @@ def run_daily_alert_job(reference_now: datetime | None = None) -> dict[str, Any]
             "target_date": str(target_date),
             "recipient_email": conf.recipient_email,
             "threshold_price": conf.threshold_price,
-            "mall_count": len(rows),
+            "mall_count": len(below),
             "source_times_kst": conf.source_times_kst,
         }
