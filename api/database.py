@@ -65,6 +65,76 @@ def _safe_alter(conn, ddl_sql: str):
         raise
 
 
+def _merge_monthly_metrics_seller_rename(conn, old_name: str, new_name: str) -> None:
+    """
+    동일 (month, threshold_price, channel)에 old·new 행이 둘 다 있으면
+    단순 UPDATE seller_name_std 시 uq_month_seller 충돌(1062)이 난다.
+    기존 new 행으로 수치를 합친 뒤 old 행을 삭제한다.
+    """
+    conn.execute(
+        text(
+            """
+            UPDATE monthly_seller_metrics AS k
+            INNER JOIN monthly_seller_metrics AS o
+              ON k.month = o.month
+             AND k.threshold_price = o.threshold_price
+             AND k.channel = o.channel
+             AND k.seller_name_std = :new_name
+             AND o.seller_name_std = :old_name
+            SET
+              k.observations = k.observations + o.observations,
+              k.below_threshold_count = k.below_threshold_count + o.below_threshold_count,
+              k.below_ratio = CASE
+                WHEN (k.observations + o.observations) > 0 THEN
+                  (k.below_threshold_count + o.below_threshold_count) * 1.0
+                  / (k.observations + o.observations)
+                ELSE k.below_ratio
+              END,
+              k.min_unit_price = CASE
+                WHEN k.min_unit_price IS NULL THEN o.min_unit_price
+                WHEN o.min_unit_price IS NULL THEN k.min_unit_price
+                ELSE LEAST(k.min_unit_price, o.min_unit_price)
+              END,
+              k.min_time = CASE
+                WHEN k.min_time IS NULL THEN o.min_time
+                WHEN o.min_time IS NULL THEN k.min_time
+                ELSE LEAST(k.min_time, o.min_time)
+              END,
+              k.last_below_time = CASE
+                WHEN k.last_below_time IS NULL THEN o.last_below_time
+                WHEN o.last_below_time IS NULL THEN k.last_below_time
+                ELSE GREATEST(k.last_below_time, o.last_below_time)
+              END,
+              k.representative_links = COALESCE(k.representative_links, o.representative_links),
+              k.calc_method_stats = COALESCE(k.calc_method_stats, o.calc_method_stats),
+              k.dip_recover_count = COALESCE(k.dip_recover_count, 0)
+                + COALESCE(o.dip_recover_count, 0),
+              k.sustained_below_count = COALESCE(k.sustained_below_count, 0)
+                + COALESCE(o.sustained_below_count, 0),
+              k.cross_platform_mismatch = GREATEST(
+                COALESCE(k.cross_platform_mismatch, 0),
+                COALESCE(o.cross_platform_mismatch, 0)
+              )
+            """
+        ),
+        {"new_name": new_name, "old_name": old_name},
+    )
+    conn.execute(
+        text(
+            """
+            DELETE o FROM monthly_seller_metrics o
+            INNER JOIN monthly_seller_metrics k
+              ON o.month = k.month
+             AND o.threshold_price = k.threshold_price
+             AND o.channel = k.channel
+             AND o.seller_name_std = :old_name
+             AND k.seller_name_std = :new_name
+            """
+        ),
+        {"new_name": new_name, "old_name": old_name},
+    )
+
+
 def _normalize_mall_names(conn):
     """
     과거 판매처명을 표준명으로 치환한다.
@@ -81,6 +151,7 @@ def _normalize_mall_names(conn):
             text("UPDATE products SET mall_name = :new_name WHERE mall_name = :old_name"),
             {"new_name": new_name, "old_name": old_name},
         )
+        _merge_monthly_metrics_seller_rename(conn, old_name, new_name)
         conn.execute(
             text(
                 "UPDATE monthly_seller_metrics "
