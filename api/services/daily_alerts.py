@@ -4,7 +4,6 @@ import os
 import smtplib
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from html import escape
@@ -594,7 +593,6 @@ def _send_email(
     subject: str,
     text_body: str,
     html_body: str,
-    report_image_png: bytes | None = None,
 ) -> None:
     host = os.getenv("ALERT_SMTP_HOST", "").strip()
     user = os.getenv("ALERT_SMTP_USER", "").strip()
@@ -617,14 +615,6 @@ def _send_email(
     alt.attach(MIMEText(text_body, "plain", "utf-8"))
     alt.attach(MIMEText(html_body, "html", "utf-8"))
     msg.attach(alt)
-    if report_image_png:
-        image_part = MIMEImage(report_image_png, _subtype="png")
-        image_part.add_header(
-            "Content-Disposition",
-            "attachment",
-            filename=f"libre2-report-{datetime.now(KST):%Y%m%d}.png",
-        )
-        msg.attach(image_part)
 
     with smtplib.SMTP(host, port, timeout=20) as server:
         if use_tls:
@@ -692,11 +682,6 @@ def run_daily_alert_job(
             subject=subject,
             text_body=text_body,
             html_body=html_body,
-            report_image_png=_build_report_image_png(
-                target_date=target_date,
-                threshold_price=conf.threshold_price,
-                report=report,
-            ),
         )
 
         db.execute(
