@@ -560,6 +560,9 @@ def run_daily_alert_job(
                 VALUES (
                     :target_date, :recipient_email, :threshold_price, :mall_count, :sent_at
                 )
+                ON DUPLICATE KEY UPDATE
+                    mall_count=VALUES(mall_count),
+                    sent_at=VALUES(sent_at)
                 """
             ),
             {
