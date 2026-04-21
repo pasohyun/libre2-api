@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import smtplib
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any
@@ -23,28 +23,6 @@ class AlertConfig:
     enabled: bool
     recipient_email: str
     threshold_price: int
-    source_times_kst: list[str]
-
-
-def _normalize_source_times(raw: str | None) -> list[str]:
-    if not raw:
-        return ["00:00", "12:00"]
-    out: list[str] = []
-    for item in raw.split(","):
-        t = item.strip()
-        if not t:
-            continue
-        parts = t.split(":")
-        if len(parts) != 2:
-            raise ValueError("source_times_kst는 HH:MM 형식이어야 합니다.")
-        hh = int(parts[0])
-        mm = int(parts[1])
-        if hh < 0 or hh > 23 or mm < 0 or mm > 59:
-            raise ValueError("source_times_kst 시간 범위가 올바르지 않습니다.")
-        t_norm = f"{hh:02d}:{mm:02d}"
-        if t_norm not in out:
-            out.append(t_norm)
-    return out or ["00:00", "12:00"]
 
 
 def _load_alert_config(db: Session) -> AlertConfig | None:
@@ -63,7 +41,6 @@ def _load_alert_config(db: Session) -> AlertConfig | None:
         enabled=bool(row["enabled"]),
         recipient_email=(row["recipient_email"] or "").strip(),
         threshold_price=int(row["threshold_price"] or config.TARGET_PRICE),
-        source_times_kst=_normalize_source_times(row.get("source_times_kst")),
     )
 
 
@@ -74,14 +51,12 @@ def get_alert_config_dict(db: Session) -> dict[str, Any]:
             "enabled": False,
             "recipient_email": "",
             "threshold_price": config.TARGET_PRICE,
-            "source_times_kst": ["00:00", "12:00"],
             "send_time_kst": os.getenv("ALERT_SEND_TIME_KST", "09:00"),
         }
     return {
         "enabled": conf.enabled,
         "recipient_email": conf.recipient_email,
         "threshold_price": conf.threshold_price,
-        "source_times_kst": conf.source_times_kst,
         "send_time_kst": os.getenv("ALERT_SEND_TIME_KST", "09:00"),
     }
 
@@ -92,10 +67,7 @@ def upsert_alert_config(
     enabled: bool,
     recipient_email: str,
     threshold_price: int,
-    source_times_kst: list[str],
 ) -> dict[str, Any]:
-    source_times_norm = _normalize_source_times(",".join(source_times_kst))
-    source_times_str = ",".join(source_times_norm)
     db.execute(
         text(
             """
@@ -114,7 +86,7 @@ def upsert_alert_config(
             "enabled": 1 if enabled else 0,
             "recipient_email": recipient_email.strip(),
             "threshold_price": threshold_price,
-            "source_times_kst": source_times_str,
+                "source_times_kst": "00:00,12:00",
         },
     )
     db.commit()
@@ -341,5 +313,4 @@ def run_daily_alert_job(reference_now: datetime | None = None) -> dict[str, Any]
             "recipient_email": conf.recipient_email,
             "threshold_price": conf.threshold_price,
             "mall_count": len(below),
-            "source_times_kst": conf.source_times_kst,
         }

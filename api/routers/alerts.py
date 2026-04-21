@@ -26,7 +26,6 @@ class AlertConfigUpsertBody(BaseModel):
     enabled: bool = True
     recipient_email: str = Field(..., min_length=5, max_length=255)
     threshold_price: int = Field(..., gt=0)
-    source_times_kst: list[str] = Field(default_factory=lambda: ["00:00", "12:00"])
 
 
 @router.get("/config")
@@ -42,7 +41,6 @@ def put_alert_config(body: AlertConfigUpsertBody, db: Session = Depends(get_db))
             enabled=body.enabled,
             recipient_email=body.recipient_email,
             threshold_price=body.threshold_price,
-            source_times_kst=body.source_times_kst,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
