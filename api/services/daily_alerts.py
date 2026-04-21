@@ -191,7 +191,7 @@ def _build_email_body(
             f"<td>{item.get('platform') or '-'}</td>"
             f"<td style='text-align:right;'>{int(item.get('unit_price') or 0):,}원</td>"
             f"<td style='text-align:right;'>{int(item.get('total_price') or 0):,}원</td>"
-            f"<td style='text-align:right;'>{int(item.get('quantity') or 0)}</td>"
+            f"<td style='text-align:center;'>{int(item.get('quantity') or 0)}</td>"
             f"<td>{item.get('time') or '-'}</td>"
             "</tr>"
             for item in below
@@ -203,7 +203,7 @@ def _build_email_body(
             "<th style='text-align:left;border-bottom:1px solid #ddd;padding:6px;'>채널</th>"
             "<th style='text-align:right;border-bottom:1px solid #ddd;padding:6px;'>최저 단가</th>"
             "<th style='text-align:right;border-bottom:1px solid #ddd;padding:6px;'>총 금액</th>"
-            "<th style='text-align:right;border-bottom:1px solid #ddd;padding:6px;'>수량</th>"
+            "<th style='text-align:center;border-bottom:1px solid #ddd;padding:6px;'>수량</th>"
             "<th style='text-align:left;border-bottom:1px solid #ddd;padding:6px;'>시점</th>"
             "</tr></thead>"
             f"<tbody>{detail_rows}</tbody></table>"
