@@ -24,7 +24,7 @@ def get_db():
 
 class AlertConfigUpsertBody(BaseModel):
     enabled: bool = True
-    recipient_email: str = Field(..., min_length=5, max_length=255)
+    recipient_emails: list[str] = Field(default_factory=list)
     threshold_price: int = Field(..., gt=0)
 
 
@@ -39,7 +39,7 @@ def put_alert_config(body: AlertConfigUpsertBody, db: Session = Depends(get_db))
         return upsert_alert_config(
             db,
             enabled=body.enabled,
-            recipient_email=body.recipient_email,
+            recipient_emails=body.recipient_emails,
             threshold_price=body.threshold_price,
         )
     except ValueError as e:

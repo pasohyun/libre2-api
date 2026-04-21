@@ -21,8 +21,25 @@ KST = timezone(timedelta(hours=9))
 @dataclass
 class AlertConfig:
     enabled: bool
-    recipient_email: str
+    recipient_emails: list[str]
     threshold_price: int
+
+
+def _normalize_recipient_emails(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    emails: list[str] = []
+    for part in raw.replace(";", ",").split(","):
+        e = part.strip().lower()
+        if not e:
+            continue
+        if "@" not in e:
+            raise ValueError(f"유효하지 않은 이메일 형식입니다: {part}")
+        if e not in emails:
+            emails.append(e)
+    if len(emails) > 5:
+        raise ValueError("수신 이메일은 최대 5개까지 설정할 수 있습니다.")
+    return emails
 
 
 def _load_alert_config(db: Session) -> AlertConfig | None:
@@ -37,9 +54,10 @@ def _load_alert_config(db: Session) -> AlertConfig | None:
     ).mappings().first()
     if not row:
         return None
+    recipients = _normalize_recipient_emails((row["recipient_email"] or "").strip())
     return AlertConfig(
         enabled=bool(row["enabled"]),
-        recipient_email=(row["recipient_email"] or "").strip(),
+        recipient_emails=recipients,
         threshold_price=int(row["threshold_price"] or config.TARGET_PRICE),
     )
 
@@ -49,13 +67,13 @@ def get_alert_config_dict(db: Session) -> dict[str, Any]:
     if conf is None:
         return {
             "enabled": False,
-            "recipient_email": "",
+            "recipient_emails": [],
             "threshold_price": config.TARGET_PRICE,
             "send_time_kst": os.getenv("ALERT_SEND_TIME_KST", "09:00"),
         }
     return {
         "enabled": conf.enabled,
-        "recipient_email": conf.recipient_email,
+        "recipient_emails": conf.recipient_emails,
         "threshold_price": conf.threshold_price,
         "send_time_kst": os.getenv("ALERT_SEND_TIME_KST", "09:00"),
     }
@@ -65,9 +83,13 @@ def upsert_alert_config(
     db: Session,
     *,
     enabled: bool,
-    recipient_email: str,
+    recipient_emails: list[str],
     threshold_price: int,
 ) -> dict[str, Any]:
+    recipients = _normalize_recipient_emails(",".join(recipient_emails))
+    if not recipients:
+        raise ValueError("수신 이메일을 최소 1개 입력해주세요.")
+    recipient_csv = ",".join(recipients)
     db.execute(
         text(
             """
@@ -84,7 +106,7 @@ def upsert_alert_config(
         ),
         {
             "enabled": 1 if enabled else 0,
-            "recipient_email": recipient_email.strip(),
+            "recipient_email": recipient_csv,
             "threshold_price": threshold_price,
                 "source_times_kst": "00:00,12:00",
         },
@@ -204,7 +226,7 @@ def _build_email_body(
     return text_body, html_body
 
 
-def _send_email(*, recipient: str, subject: str, text_body: str, html_body: str) -> None:
+def _send_email(*, recipients: list[str], subject: str, text_body: str, html_body: str) -> None:
     host = os.getenv("ALERT_SMTP_HOST", "").strip()
     user = os.getenv("ALERT_SMTP_USER", "").strip()
     password = os.getenv("ALERT_SMTP_PASSWORD", "").strip()
@@ -221,7 +243,7 @@ def _send_email(*, recipient: str, subject: str, text_body: str, html_body: str)
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = mail_from
-    msg["To"] = recipient
+    msg["To"] = ", ".join(recipients)
     msg.attach(MIMEText(text_body, "plain", "utf-8"))
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
@@ -229,7 +251,7 @@ def _send_email(*, recipient: str, subject: str, text_body: str, html_body: str)
         if use_tls:
             server.starttls()
         server.login(user, password)
-        server.sendmail(mail_from, [recipient], msg.as_string())
+        server.sendmail(mail_from, recipients, msg.as_string())
 
 
 def run_daily_alert_job(reference_now: datetime | None = None) -> dict[str, Any]:
@@ -242,8 +264,9 @@ def run_daily_alert_job(reference_now: datetime | None = None) -> dict[str, Any]
             return {"status": "skipped", "reason": "config_not_set"}
         if not conf.enabled:
             return {"status": "skipped", "reason": "disabled"}
-        if not conf.recipient_email:
+        if not conf.recipient_emails:
             return {"status": "skipped", "reason": "recipient_empty"}
+        recipient_key = ",".join(conf.recipient_emails)
 
         exists = db.execute(
             text(
@@ -258,7 +281,7 @@ def run_daily_alert_job(reference_now: datetime | None = None) -> dict[str, Any]
             ),
             {
                 "target_date": target_date.strftime("%Y-%m-%d"),
-                "recipient_email": conf.recipient_email,
+                "recipient_email": recipient_key,
                 "threshold_price": conf.threshold_price,
             },
         ).first()
@@ -281,7 +304,7 @@ def run_daily_alert_job(reference_now: datetime | None = None) -> dict[str, Any]
         )
 
         _send_email(
-            recipient=conf.recipient_email,
+            recipients=conf.recipient_emails,
             subject=subject,
             text_body=text_body,
             html_body=html_body,
@@ -300,7 +323,7 @@ def run_daily_alert_job(reference_now: datetime | None = None) -> dict[str, Any]
             ),
             {
                 "target_date": target_date.strftime("%Y-%m-%d"),
-                "recipient_email": conf.recipient_email,
+                "recipient_email": recipient_key,
                 "threshold_price": conf.threshold_price,
                 "mall_count": len(below),
                 "sent_at": now_kst.replace(tzinfo=None),
@@ -310,7 +333,7 @@ def run_daily_alert_job(reference_now: datetime | None = None) -> dict[str, Any]
         return {
             "status": "sent",
             "target_date": str(target_date),
-            "recipient_email": conf.recipient_email,
+            "recipient_emails": conf.recipient_emails,
             "threshold_price": conf.threshold_price,
             "mall_count": len(below),
         }
