@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape
 from io import BytesIO
 from typing import Any
 
@@ -285,12 +286,129 @@ def _draw_wrapped_text(
     return y
 
 
+def _build_report_image_png_with_browser(
+    *,
+    target_date: date,
+    threshold_price: int,
+    report: dict[str, Any],
+) -> bytes:
+    # Chromium 렌더링으로 폰트 fallback이 잘 동작해 한글 깨짐 가능성을 크게 줄인다.
+    from playwright.sync_api import sync_playwright
+
+    summary = report.get("summary") or {}
+    below = report.get("below_threshold_list") or []
+    top5 = summary.get("top5_lowest") or []
+    shown_rows = below[:35]
+
+    top5_items = "".join(
+        f"<li>{escape(str(item.get('seller_name') or '-'))}: "
+        f"{int(item.get('min_unit_price') or 0):,}원 "
+        f"({escape(str(item.get('platform') or '-'))}) @ "
+        f"{escape(str(item.get('min_time') or '-'))}</li>"
+        for item in top5
+    )
+    table_rows = "".join(
+        "<tr>"
+        f"<td>{escape(str(item.get('seller_name') or '-'))}</td>"
+        f"<td>{escape(str(item.get('platform') or '-'))}</td>"
+        f"<td class='num'>{int(item.get('unit_price') or 0):,}원</td>"
+        f"<td class='num'>{int(item.get('total_price') or 0):,}원</td>"
+        f"<td class='qty'>{int(item.get('quantity') or 0)}</td>"
+        f"<td>{escape(str(item.get('time') or '-'))}</td>"
+        "</tr>"
+        for item in shown_rows
+    )
+    if not table_rows:
+        table_rows = "<tr><td colspan='6'>기준가 이하 거래처가 없습니다.</td></tr>"
+
+    html = f"""
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body {{
+      margin: 0;
+      background: #f8fafc;
+      font-family: "Noto Sans KR", "Noto Sans CJK KR", "NanumGothic", "Malgun Gothic", sans-serif;
+      color: #0f172a;
+    }}
+    .wrap {{ width: 1200px; box-sizing: border-box; padding: 36px; }}
+    h1 {{ margin: 0 0 8px; font-size: 42px; }}
+    .sub {{ margin: 0 0 24px; font-size: 26px; color: #334155; }}
+    h2 {{ margin: 20px 0 10px; font-size: 28px; color: #1e40af; }}
+    .line {{ font-size: 21px; line-height: 1.6; }}
+    ul {{ margin-top: 8px; font-size: 20px; line-height: 1.6; }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 10px; background: #fff; font-size: 19px; }}
+    th {{ background: #e2e8f0; text-align: left; border: 1px solid #cbd5e1; padding: 9px; }}
+    td {{ border: 1px solid #e2e8f0; padding: 9px; }}
+    .num {{ text-align: right; }}
+    .qty {{ text-align: center; }}
+    .note {{ margin-top: 12px; color: #64748b; font-size: 16px; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Libre2 일일 모니터링 리포트 ({target_date:%Y-%m-%d})</h1>
+    <p class="sub">기준가: {threshold_price:,}원</p>
+    <h2>① 요약</h2>
+    <div class="line">- 기준가 이하 셀러 수: {int(summary.get("below_threshold_seller_count") or 0)}곳</div>
+    {"<div class='line'>- 최저 단가: <strong>" + f"{int(summary.get('global_min_price') or 0):,}원</strong> (" + escape(str(summary.get("global_min_seller") or "-")) + ") @ " + escape(str(summary.get("global_min_time") or "-")) + "</div>" if summary.get("global_min_price") is not None else ""}
+    {"<div class='line' style='margin-top:6px;'>- 최저가격 상위 5개 거래처</div><ul>" + top5_items + "</ul>" if top5 else ""}
+    <h2>② 기준가 이하 리스트</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>판매처</th><th>채널</th><th style="text-align:right;">최저 단가</th>
+          <th style="text-align:right;">총 금액</th><th style="text-align:center;">수량</th><th>시점</th>
+        </tr>
+      </thead>
+      <tbody>{table_rows}</tbody>
+    </table>
+    {"<div class='note'>* 이미지에는 상위 35건만 표시되었습니다. 전체 건수: " + str(len(below)) + "건</div>" if len(below) > 35 else ""}
+  </div>
+</body>
+</html>
+"""
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+        try:
+            page = browser.new_page(viewport={"width": 1200, "height": 2400})
+            page.set_content(html, wait_until="domcontentloaded")
+            clip = page.locator("body").bounding_box()
+            if not clip:
+                raise RuntimeError("failed to measure report body for screenshot")
+            png = page.screenshot(
+                clip={
+                    "x": clip["x"],
+                    "y": clip["y"],
+                    "width": clip["width"],
+                    "height": max(clip["height"], 900),
+                },
+                type="png",
+            )
+            return png
+        finally:
+            browser.close()
+
+
 def _build_report_image_png(
     *,
     target_date: date,
     threshold_price: int,
     report: dict[str, Any],
 ) -> bytes:
+    try:
+        return _build_report_image_png_with_browser(
+            target_date=target_date,
+            threshold_price=threshold_price,
+            report=report,
+        )
+    except Exception:
+        # 브라우저 렌더 실패 시 기존 Pillow 렌더로 폴백.
+        pass
+
     summary = report.get("summary") or {}
     below = report.get("below_threshold_list") or []
     top5 = summary.get("top5_lowest") or []
