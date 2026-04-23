@@ -20,7 +20,9 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
-MODIFIED_Z_THRESHOLD = 3.5
+MODIFIED_Z_THRESHOLD = float(
+    os.getenv("PRICE_ANALYTICS_MODIFIED_Z_THRESHOLD", "3.5")
+)
 
 # 하루 스냅샷 수 (스케줄 변경 시 PRICE_ANALYTICS_SNAPSHOTS_PER_DAY 로 맞출 것)
 SNAPSHOTS_PER_DAY = int(os.getenv("PRICE_ANALYTICS_SNAPSHOTS_PER_DAY", "4"))
@@ -53,7 +55,24 @@ def _schedule_meta() -> dict[str, Any]:
         "rolling_min_days": ROLL_MIN_PERIOD_DAYS,
         "ets_fit_max_days": ETS_MAX_DAYS,
         "ets_fit_min_days": ETS_MIN_DAYS,
+        "anomaly_modified_z_threshold": MODIFIED_Z_THRESHOLD,
     }
+
+
+def _adaptive_rolling_params(n: int) -> tuple[int, int]:
+    """
+    스냅샷 개수가 적을 때(판매처·기간 제한)에도 이상치를 잡을 수 있도록
+    목표 롤링(ROLL_BASELINE)보다 짧게 쓴다. (n 미만이면 n-2까지)
+    """
+    if n < 6:
+        return (0, 0)
+    roll_baseline = min(ROLL_BASELINE, max(5, n - 2))
+    roll_min = min(ROLL_MIN_PERIODS, max(3, roll_baseline // 2))
+    roll_min = min(roll_min, roll_baseline - 1)
+    roll_min = max(3, roll_min)
+    if n < roll_min + 2:
+        return (0, 0)
+    return (roll_baseline, roll_min)
 
 
 def _channel_filter_sql(channel: str | None) -> tuple[str, dict[str, Any]]:
@@ -102,19 +121,27 @@ def fetch_mall_min_price_series(
 
 
 def _modified_z_scores(values: np.ndarray) -> np.ndarray:
+    """
+    MAD가 0에 가까우면(잔차 대부분 동일 + 소수 튐) 중앙값 기반 z가 전부 0이 된다.
+    이때 평균 절대편차 → 표준편차 순으로 스케일을 잡는다.
+    """
     med = np.median(values)
-    mad = np.median(np.abs(values - med))
-    if mad is None or mad < 1e-9:
+    mad = float(np.median(np.abs(values - med)))
+    if mad < 1e-6:
+        mad = float(np.mean(np.abs(values - med)))
+    if mad < 1e-6:
+        mad = max(float(np.std(values)), 1.0)
+    if mad < 1e-9:
         return np.zeros_like(values, dtype=float)
     return 0.6745 * (values - med) / mad
 
 
 def detect_residual_anomalies(df: pd.DataFrame) -> pd.DataFrame:
     """
-    baseline = lagged rolling median(가격).
+    baseline = lag가 있는 롤링 중앙값(가격).
     잔차에 대해 전역(해당 구간) robust z — 급락/급등 플래그.
     """
-    if df.empty or len(df) < ROLL_MIN_PERIODS + 1:
+    if df.empty:
         return pd.DataFrame(
             columns=[
                 "ts",
@@ -127,15 +154,30 @@ def detect_residual_anomalies(df: pd.DataFrame) -> pd.DataFrame:
         )
 
     x = df.sort_values("ts").reset_index(drop=True)
+    n = len(x)
+    roll_baseline, roll_min = _adaptive_rolling_params(n)
+    if roll_baseline <= 0:
+        return pd.DataFrame(
+            columns=[
+                "ts",
+                "min_price",
+                "baseline",
+                "residual",
+                "modified_z",
+                "kind",
+            ]
+        )
+
     baseline = (
         x["min_price"]
         .shift(1)
-        .rolling(ROLL_BASELINE, min_periods=ROLL_MIN_PERIODS)
+        .rolling(roll_baseline, min_periods=roll_min)
         .median()
     )
     resid = x["min_price"] - baseline
     valid_mask = resid.notna() & baseline.notna()
-    if valid_mask.sum() < 5:
+    min_valid = min(5, max(3, n // 3))
+    if int(valid_mask.sum()) < min_valid:
         return pd.DataFrame(
             columns=[
                 "ts",
@@ -269,6 +311,7 @@ def build_mall_price_insights(
         }
 
     x = df.sort_values("ts").reset_index(drop=True)
+    rw_eff, rmin_eff = _adaptive_rolling_params(len(x))
     anom_df = detect_residual_anomalies(x)
     anomalies: list[dict[str, Any]] = []
     for _, row in anom_df.iterrows():
@@ -301,11 +344,14 @@ def build_mall_price_insights(
         "forecast": fc,
         "algorithm": {
             "anomaly": (
-                f"lagged_rolling_median_{ROLL_BASELINE}snapshots_~{ROLL_BASELINE_DAYS}d_"
+                f"lagged_rolling_median_target_{ROLL_BASELINE}snapshots_~{ROLL_BASELINE_DAYS}d_"
+                f"effective_{rw_eff or 0}x{rmin_eff or 0}_"
                 f"modified_z_mad_threshold_{MODIFIED_Z_THRESHOLD}"
             ),
             "forecast": forecast_algo,
             "reference": "modified z-score (MAD): Iglewicz & Hoaglin (1993)",
+            "anomaly_effective_rolling_snapshots": rw_eff,
+            "anomaly_effective_min_periods": rmin_eff,
             **_schedule_meta(),
         },
     }
