@@ -13,6 +13,7 @@ sqlalchemy
 python-dotenv
 mysql-connector-python
 cryptography  # MySQL 8.0 인증 방식 지원
+PyJWT  # 대시보드 공유 비밀번호 JWT
 
 # -----------------------
 # Crawling / HTTP
@@ -23,6 +24,8 @@ playwright
 beautifulsoup4
 lxml
 pandas  # crawl_naver.py에서 import (현재 미사용이지만 호환성을 위해 유지)
+numpy  # price_analytics (시계열 이상·추세)
+statsmodels  # price_analytics (Holt 지수평활 1스텝 예측)
 openpyxl  # products 원본 엑셀보내기
 
 # -----------------------
@@ -30,3 +33,4 @@ openpyxl  # products 원본 엑셀보내기
 # -----------------------
 python-dateutil
 schedule
+Pillow  # 알람 리포트 이미지를 PNG 첨부로 생성

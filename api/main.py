@@ -1,12 +1,13 @@
 # api/main.py
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import BackgroundTasks, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.routers import health, products
-from api.routers import reports
-from api.database import init_db  # 테이블 자동 생성
+
 from api import scheduler
+from api.auth_dashboard import require_dashboard_auth
+from api.database import init_db  # 테이블 자동 생성
+from api.routers import alerts, auth_dashboard, health, memos, products, reports
 
 
 @asynccontextmanager
@@ -30,6 +31,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",  # 로컬 개발
         "http://localhost:5173",  # Vite 로컬
+        "http://127.0.0.1:5173",  # Vite 로컬(127.0.0.1은 localhost와 origin이 다름)
         "https://libre-price-monitor-client.vercel.app",  # Vercel Production 도메인 (기존)
         "https://libre-price-monitor-client-quz71ujve-libre2-monitoring.vercel.app",  # Vercel Pro팀 도메인
         "https://*.vercel.app",   # Vercel 모든 프리뷰 도메인
@@ -40,7 +42,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.post("/crawl/trigger", tags=["crawl"])
+@app.post(
+    "/crawl/trigger",
+    tags=["crawl"],
+    dependencies=[Depends(require_dashboard_auth)],
+)
 async def trigger_crawl(background_tasks: BackgroundTasks):
     """수동으로 쿠팡 크롤링 즉시 실행"""
     scheduler.run_now()
@@ -58,5 +64,8 @@ def root():
     }
 
 app.include_router(health.router)
-app.include_router(products.router)
-app.include_router(reports.router)
+app.include_router(auth_dashboard.router)
+app.include_router(products.router, dependencies=[Depends(require_dashboard_auth)])
+app.include_router(reports.router, dependencies=[Depends(require_dashboard_auth)])
+app.include_router(memos.router, dependencies=[Depends(require_dashboard_auth)])
+app.include_router(alerts.router, dependencies=[Depends(require_dashboard_auth)])

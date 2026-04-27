@@ -55,6 +55,108 @@ BRAND_STORES = [
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
+    {
+        "url": "https://shop.coupang.com/A00694926/?platform=p",
+        "seller": "지씨",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
+    {
+        "url": "https://shop.coupang.com/A01255118/?platform=p",
+        "seller": "피플랜",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
+    {
+        "url": "https://shop.coupang.com/A00306395/?platform=p",
+        "seller": "좋은의료기",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
+    {
+        "url": "https://shop.coupang.com/firstcare1004/?platform=p",
+        "seller": "예성메디칼",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
+    {
+        "url": "https://shop.coupang.com/A00214675/?platform=p",
+        "seller": "가온씨엔티",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
+    {
+        "url": "https://shop.coupang.com/A00206338/?platform=p",
+        "seller": "네오클래스",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
+    {
+        "url": "https://shop.coupang.com/storealpha/?platform=p",
+        "seller": "알파플러스",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
+    {
+        "url": "https://shop.coupang.com/A00309977/?platform=p",
+        "seller": "건강생활",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
+    {
+        "url": "https://shop.coupang.com/medicats/?platform=p",
+        "seller": "메디캣",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
+    {
+        "url": "https://shop.coupang.com/A00063576/?platform=p",
+        "seller": "유니템아이",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
+    {
+        "url": "https://shop.coupang.com/A00149074/?platform=p",
+        "seller": "인터비즈",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
+    {
+        "url": "https://shop.coupang.com/A00347924/?platform=p",
+        "seller": "케이엔지",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
+    {
+        "url": "https://shop.coupang.com/A01000648/?platform=p",
+        "seller": "이지페어",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
+    {
+        "url": "https://shop.coupang.com/A00186648/?platform=p",
+        "seller": "메디칼의료기",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
+    {
+        "url": "https://shop.coupang.com/A00568181/?platform=p",
+        "seller": "씨엘메디",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
+    {
+        "url": "https://shop.coupang.com/A01378801/?platform=p",
+        "seller": "나눔메디",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
+    {
+        "url": "https://shop.coupang.com/goodmorning67/?platform=p",
+        "seller": "굿모닝의료기",
+        "min_price": 0,
+        "name_filter": r"리브레\s*2|libre\s*2",
+    },
 ]
 
 BRAND_KEYWORD = os.getenv("COUPANG_BRAND_KEYWORD", config.SEARCH_KEYWORD)
@@ -324,6 +426,12 @@ def run_crawling():
                     if any(re.search(pat, product_name, re.IGNORECASE) for pat in NON_LIBRE_CGM_EXCLUDE_PATTERNS):
                         skipped += 1
                         print(f"  [SKIP] 비대상 CGM 제외: {product_name[:40]}")
+                        continue
+
+                    # 바로잰 제품 제외
+                    if re.search(r"바로잰", product_name, re.IGNORECASE):
+                        skipped += 1
+                        print(f"  [SKIP] 바로잰 제외: {product_name[:40]}")
                         continue
 
                     # 최소 가격 필터

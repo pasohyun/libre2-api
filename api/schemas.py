@@ -130,3 +130,63 @@ class MonthlyReportResponse(BaseModel):
 
     llm: Optional[Dict[str, Any]] = None
     generated_at: Optional[datetime] = None
+
+
+# ── Price analytics (통계 이상 / 단기 추세) ───────────────────────────
+
+class PriceAnomalyItem(BaseModel):
+    ts: datetime
+    min_price: int
+    baseline: Optional[float] = None
+    modified_z: Optional[float] = None
+    kind: str
+
+
+class PriceForecastBlock(BaseModel):
+    predicted_min_price: float
+    pred_low: float
+    pred_high: float
+    horizon_steps: int = 1
+    method: str
+    window: Optional[int] = None
+    rmse: Optional[float] = None
+
+
+class MallPriceInsightsResponse(BaseModel):
+    mall_name: str
+    days: int
+    channel: Optional[str] = None
+    observation_count: int
+    anomalies: List[PriceAnomalyItem]
+    forecast: Optional[PriceForecastBlock] = None
+    algorithm: Dict[str, Any]
+
+
+# ── Dashboard memos (업체별 / 공용 계보) ───────────────────────────────
+
+class DashboardMemoCreateGlobal(BaseModel):
+    body: str
+    summary: Optional[str] = None
+
+
+class DashboardMemoCreateVendor(BaseModel):
+    channel: str
+    vendor_label: str
+    body: str
+    summary: Optional[str] = None
+
+
+class DashboardMemoOut(BaseModel):
+    id: int
+    scope: str
+    channel: Optional[str] = None
+    vendor_label: Optional[str] = None
+    body: str
+    summary: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+class DashboardMemoListVendor(BaseModel):
+    count: int
+    items: List[DashboardMemoOut]

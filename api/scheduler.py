@@ -19,6 +19,7 @@ CRAWL_TIMES_KST = [
     for t in os.getenv("CRAWL_TIMES_KST", "06:00,12:00,18:00,00:00").split(",")
     if t.strip()
 ]
+ALERT_SEND_TIME_KST = os.getenv("ALERT_SEND_TIME_KST", "09:00").strip() or "09:00"
 
 # gunicorn multi-worker 환경에서 중복 실행 방지
 SCHEDULER_ENABLED = os.getenv("ENABLE_SCHEDULER", "false").lower() == "true"
@@ -35,6 +36,18 @@ def _run_coupang_crawl():
         logger.error("[scheduler] 쿠팡 크롤링 실패\n%s", traceback.format_exc())
 
 
+def _run_daily_alert():
+    """전일 셋팅가 미만 거래처 메일 발송"""
+    logger.info("[scheduler] 일일 알람 메일 발송 시작")
+    try:
+        from api.services.daily_alerts import run_daily_alert_job
+
+        result = run_daily_alert_job()
+        logger.info("[scheduler] 일일 알람 결과: %s", result)
+    except Exception:
+        logger.error("[scheduler] 일일 알람 메일 발송 실패\n%s", traceback.format_exc())
+
+
 def _kst_to_utc(hhmm: str) -> str:
     """HH:MM (KST) → HH:MM (UTC) 변환 (KST = UTC+9)"""
     h, m = map(int, hhmm.split(":"))
@@ -47,6 +60,14 @@ def _scheduler_loop():
         t_utc = _kst_to_utc(t_kst)
         schedule.every().day.at(t_utc).do(_run_coupang_crawl)
         logger.info("[scheduler] 등록: 매일 %s KST (%s UTC)", t_kst, t_utc)
+
+    alert_utc = _kst_to_utc(ALERT_SEND_TIME_KST)
+    schedule.every().day.at(alert_utc).do(_run_daily_alert)
+    logger.info(
+        "[scheduler] 등록: 매일 %s KST (%s UTC) - 일일 알람 메일",
+        ALERT_SEND_TIME_KST,
+        alert_utc,
+    )
 
     while not _stop_event.is_set():
         schedule.run_pending()

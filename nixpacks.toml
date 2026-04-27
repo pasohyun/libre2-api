@@ -17,7 +17,12 @@ aptPkgs = [
   "libasound2",
   "libatspi2.0-0",
   "libxshmfence1",
-  "libgtk-3-0"
+  "libgtk-3-0",
+  "fontconfig",
+  "fonts-noto",
+  "fonts-noto-core",
+  "fonts-noto-cjk",
+  "fonts-nanum"
 ]
 
 [phases.install]
