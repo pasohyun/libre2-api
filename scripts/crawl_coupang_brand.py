@@ -44,115 +44,115 @@ BRAND_STORES = [
         "name_filter": None,
     },
     {
-        "url": "https://shop.coupang.com/A00158907/?platform=p",
+        "url": "https://shop.coupang.com/A00158907/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "닥터다이어리",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/promed/?platform=p",
+        "url": "https://shop.coupang.com/promed/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "하우투약",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/A00694926/?platform=p",
+        "url": "https://shop.coupang.com/A00694926/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "지씨",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/A01255118/?platform=p",
+        "url": "https://shop.coupang.com/A01255118/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "피플랜",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/A00306395/?platform=p",
+        "url": "https://shop.coupang.com/A00306395/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "좋은의료기",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/firstcare1004/?platform=p",
+        "url": "https://shop.coupang.com/firstcare1004/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "예성메디칼",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/A00214675/?platform=p",
+        "url": "https://shop.coupang.com/A00214675/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "가온씨엔티",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/A00206338/?platform=p",
+        "url": "https://shop.coupang.com/A00206338/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "네오클래스",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/storealpha/?platform=p",
+        "url": "https://shop.coupang.com/storealpha/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "알파플러스",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/A00309977/?platform=p",
+        "url": "https://shop.coupang.com/A00309977/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "건강생활",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/medicats/?platform=p",
+        "url": "https://shop.coupang.com/medicats/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "메디캣",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/A00063576/?platform=p",
+        "url": "https://shop.coupang.com/A00063576/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "유니템아이",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/A00149074/?platform=p",
+        "url": "https://shop.coupang.com/A00149074/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "인터비즈",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/A00347924/?platform=p",
+        "url": "https://shop.coupang.com/A00347924/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "케이엔지",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/A01000648/?platform=p",
+        "url": "https://shop.coupang.com/A01000648/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "이지페어",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/A00186648/?platform=p",
+        "url": "https://shop.coupang.com/A00186648/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "메디칼의료기",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/A00568181/?platform=p",
+        "url": "https://shop.coupang.com/A00568181/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "씨엘메디",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/A01378801/?platform=p",
+        "url": "https://shop.coupang.com/A01378801/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "나눔메디",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
-        "url": "https://shop.coupang.com/goodmorning67/?platform=p",
+        "url": "https://shop.coupang.com/goodmorning67/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
         "seller": "굿모닝의료기",
         "min_price": 0,
         "name_filter": r"리브레\s*2|libre\s*2",
@@ -253,7 +253,7 @@ def _open_browser(p):
         last_err = None
         for attempt in range(1, 4):
             try:
-                return p.chromium.connect_over_cdp(BROWSER_WSS, timeout=120000), "remote"
+                return p.chromium.connect_over_cdp(BROWSER_WSS, timeout=300000), "remote"
             except Exception as e:
                 last_err = e
                 wait = 10 * attempt
@@ -390,96 +390,102 @@ def run_crawling():
         print(f"  수동확정 수량 재사용 맵: {len(confirmed_map)}개 링크")
 
     all_rows = []
+    batch_size = 10
 
     with sync_playwright() as p:
-        browser, mode = _open_browser(p)
+        for batch_start in range(0, len(BRAND_STORES), batch_size):
+            batch = BRAND_STORES[batch_start:batch_start + batch_size]
+            batch_num = batch_start // batch_size + 1
+            total_batches = (len(BRAND_STORES) + batch_size - 1) // batch_size
 
-        try:
-            for i, store in enumerate(BRAND_STORES):
-                url = store["url"]
-                seller = store["seller"]
-                min_price = store["min_price"]
-                name_filter = store.get("name_filter")
+            if batch_start > 0:
+                print(f"\n[BRAND] 브라우저 재연결 (IP 변경)... 15초 대기")
+                time.sleep(15)
 
-                # 스토어 간 약간의 간격 (요청 리듬 완화)
-                if i > 0:
-                    time.sleep(3)
+            print(f"\n[BATCH {batch_num}/{total_batches}] {len(batch)}개 스토어")
+            browser, mode = _open_browser(p)
 
-                raw_products = crawl_brand_store(browser, mode, url)
-
-                if not raw_products:
-                    print(f"  [{seller}] 크롤링된 상품 없음")
-                    continue
-
-                kept = 0
-                skipped = 0
-                for prod in raw_products:
-                    product_name = prod["product_name"]
-                    total_price = prod["total_price"]
-
-                    # 상품명 필터 (정규식, 대소문자 무시)
-                    if name_filter and not re.search(name_filter, product_name, re.IGNORECASE):
-                        skipped += 1
-                        continue
-
-                    # 덱스콤 G7 등 비대상 CGM 제품 제외
-                    if any(re.search(pat, product_name, re.IGNORECASE) for pat in NON_LIBRE_CGM_EXCLUDE_PATTERNS):
-                        skipped += 1
-                        print(f"  [SKIP] 비대상 CGM 제외: {product_name[:40]}")
-                        continue
-
-                    # 바로잰 제품 제외
-                    if re.search(r"바로잰", product_name, re.IGNORECASE):
-                        skipped += 1
-                        print(f"  [SKIP] 바로잰 제외: {product_name[:40]}")
-                        continue
-
-                    # 최소 가격 필터
-                    if min_price and total_price < min_price:
-                        skipped += 1
-                        print(f"  [SKIP] {product_name[:40]}  ({total_price:,} < {min_price:,})")
-                        continue
-
-                    qty, unit_price, how = analyze_product(
-                        product_name,
-                        total_price,
-                        prod.get("link") or "",
-                        confirmed_map,
-                    )
-
-                    row = {
-                        "keyword": BRAND_KEYWORD,
-                        "product_name": product_name,
-                        "unit_price": unit_price,
-                        "quantity": qty,
-                        "total_price": total_price,
-                        "mall_name": seller,
-                        "calc_method": how,
-                        "link": prod["link"],
-                        "image_url": prod["image_url"],
-                        "card_image_path": None,
-                        "channel": "coupang",
-                        "market": "쿠팡",
-                    }
-                    all_rows.append(row)
-                    kept += 1
-
-                    print(f"  [OK] {product_name[:50]}")
-                    print(f"       total={total_price:,} qty={qty} unit={unit_price:,} ({how})")
-
-                filter_desc = []
-                if name_filter:
-                    filter_desc.append(f"name='{name_filter}'")
-                if min_price:
-                    filter_desc.append(f"min_price={min_price:,}")
-                filter_str = ", ".join(filter_desc) if filter_desc else "none"
-                print(f"  [{seller}] kept={kept}, skipped={skipped} (filter: {filter_str})")
-                print()
-        finally:
             try:
-                browser.close()
-            except Exception:
-                pass
+                for i, store in enumerate(batch):
+                    url = store["url"]
+                    seller = store["seller"]
+                    min_price = store["min_price"]
+                    name_filter = store.get("name_filter")
+
+                    if i > 0:
+                        time.sleep(8)
+
+                    raw_products = crawl_brand_store(browser, mode, url)
+
+                    if not raw_products:
+                        print(f"  [{seller}] 크롤링된 상품 없음")
+                        continue
+
+                    kept = 0
+                    skipped = 0
+                    for prod in raw_products:
+                        product_name = prod["product_name"]
+                        total_price = prod["total_price"]
+
+                        if name_filter and not re.search(name_filter, product_name, re.IGNORECASE):
+                            skipped += 1
+                            continue
+
+                        if any(re.search(pat, product_name, re.IGNORECASE) for pat in NON_LIBRE_CGM_EXCLUDE_PATTERNS):
+                            skipped += 1
+                            print(f"  [SKIP] 비대상 CGM 제외: {product_name[:40]}")
+                            continue
+
+                        if re.search(r"바로잰", product_name, re.IGNORECASE):
+                            skipped += 1
+                            print(f"  [SKIP] 바로잰 제외: {product_name[:40]}")
+                            continue
+
+                        if min_price and total_price < min_price:
+                            skipped += 1
+                            print(f"  [SKIP] {product_name[:40]}  ({total_price:,} < {min_price:,})")
+                            continue
+
+                        qty, unit_price, how = analyze_product(
+                            product_name,
+                            total_price,
+                            prod.get("link") or "",
+                            confirmed_map,
+                        )
+
+                        row = {
+                            "keyword": BRAND_KEYWORD,
+                            "product_name": product_name,
+                            "unit_price": unit_price,
+                            "quantity": qty,
+                            "total_price": total_price,
+                            "mall_name": seller,
+                            "calc_method": how,
+                            "link": prod["link"],
+                            "image_url": prod["image_url"],
+                            "card_image_path": None,
+                            "channel": "coupang",
+                            "market": "쿠팡",
+                        }
+                        all_rows.append(row)
+                        kept += 1
+
+                        print(f"  [OK] {product_name[:50]}")
+                        print(f"       total={total_price:,} qty={qty} unit={unit_price:,} ({how})")
+
+                    filter_desc = []
+                    if name_filter:
+                        filter_desc.append(f"name='{name_filter}'")
+                    if min_price:
+                        filter_desc.append(f"min_price={min_price:,}")
+                    filter_str = ", ".join(filter_desc) if filter_desc else "none"
+                    print(f"  [{seller}] kept={kept}, skipped={skipped} (filter: {filter_str})")
+                    print()
+            finally:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
 
     if not all_rows:
         print("[ERROR] 저장할 상품이 없습니다.")
