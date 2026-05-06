@@ -131,6 +131,7 @@ def _build_email_body(
     summary = report.get("summary") or {}
     below = report.get("below_threshold_list") or []
     top5 = summary.get("top5_lowest") or []
+    dashboard_url = (os.getenv("ALERT_DASHBOARD_URL", "") or "").strip()
 
     summary_lines = [
         f"- 기준가 이하 셀러 수: {int(summary.get('below_threshold_seller_count') or 0)}곳",
@@ -153,18 +154,21 @@ def _build_email_body(
     detail_lines = []
     if below:
         for item in below:
+            item_link = str(item.get("link") or "").strip()
             detail_lines.append(
                 f"- {item.get('seller_name') or '-'} | {item.get('platform') or '-'} | "
                 f"{int(item.get('unit_price') or 0):,}원 | "
                 f"{int(item.get('total_price') or 0):,}원 | 수량 {int(item.get('quantity') or 0)} | "
                 f"{item.get('time') or '-'}"
+                + (f" | 링크 {item_link}" if item_link else "")
             )
     else:
         detail_lines.append("기준가 이하 거래처가 없습니다.")
 
     text_body = (
         f"{target_date:%Y-%m-%d} 기준 알람 리포트 (기준가 {threshold_price:,}원)\n\n"
-        "① 요약\n"
+        + (f"대시보드: {dashboard_url}\n\n" if dashboard_url else "")
+        + "① 요약\n"
         + "\n".join(summary_lines)
         + "\n\n② 기준가 이하 리스트\n"
         + "\n".join(detail_lines)
@@ -185,17 +189,26 @@ def _build_email_body(
         )
 
     if below:
-        detail_rows = "".join(
-            "<tr>"
-            f"<td>{item.get('seller_name') or '-'}</td>"
-            f"<td>{item.get('platform') or '-'}</td>"
-            f"<td style='text-align:right;'>{int(item.get('unit_price') or 0):,}원</td>"
-            f"<td style='text-align:right;'>{int(item.get('total_price') or 0):,}원</td>"
-            f"<td style='text-align:center;'>{int(item.get('quantity') or 0)}</td>"
-            f"<td>{item.get('time') or '-'}</td>"
-            "</tr>"
-            for item in below
-        )
+        detail_rows_list: list[str] = []
+        for item in below:
+            item_link = str(item.get("link") or "").strip()
+            link_cell = (
+                f"<td><a href=\"{escape(item_link)}\" target=\"_blank\" rel=\"noreferrer\">바로가기</a></td>"
+                if item_link
+                else "<td>-</td>"
+            )
+            detail_rows_list.append(
+                "<tr>"
+                f"<td>{item.get('seller_name') or '-'}</td>"
+                f"<td>{item.get('platform') or '-'}</td>"
+                f"<td style='text-align:right;'>{int(item.get('unit_price') or 0):,}원</td>"
+                f"<td style='text-align:right;'>{int(item.get('total_price') or 0):,}원</td>"
+                f"<td style='text-align:center;'>{int(item.get('quantity') or 0)}</td>"
+                f"<td>{item.get('time') or '-'}</td>"
+                f"{link_cell}"
+                "</tr>"
+            )
+        detail_rows = "".join(detail_rows_list)
         detail_html = (
             "<table style='border-collapse:collapse;width:100%;font-size:13px;'>"
             "<thead><tr>"
@@ -205,6 +218,7 @@ def _build_email_body(
             "<th style='text-align:right;border-bottom:1px solid #ddd;padding:6px;'>총 금액</th>"
             "<th style='text-align:center;border-bottom:1px solid #ddd;padding:6px;'>수량</th>"
             "<th style='text-align:left;border-bottom:1px solid #ddd;padding:6px;'>시점</th>"
+            "<th style='text-align:left;border-bottom:1px solid #ddd;padding:6px;'>링크</th>"
             "</tr></thead>"
             f"<tbody>{detail_rows}</tbody></table>"
         )
@@ -212,6 +226,14 @@ def _build_email_body(
         detail_html = "<p>기준가 이하 거래처가 없습니다.</p>"
 
     html_body = (
+        (
+            "<p style='margin:0 0 8px;'>"
+            f"<a href=\"{escape(dashboard_url)}\" target=\"_blank\" rel=\"noreferrer\">대시보드 바로가기</a>"
+            "</p>"
+        )
+        if dashboard_url
+        else ""
+    ) + (
         f"<p><strong>{target_date:%Y-%m-%d}</strong> 기준 알람 리포트 "
         f"(기준가 <strong>{threshold_price:,}원</strong>)</p>"
         "<h3 style='margin:8px 0 4px;'>① 요약</h3>"
