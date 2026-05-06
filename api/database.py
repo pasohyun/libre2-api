@@ -237,6 +237,8 @@ def init_db():
             vendor_label VARCHAR(255) NULL,
             body LONGTEXT NOT NULL,
             summary VARCHAR(500) NULL,
+            image_path TEXT NULL,
+            image_paths JSON NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             INDEX idx_scope_created (scope, created_at),
@@ -310,6 +312,8 @@ def init_db():
             _safe_alter(conn, "ALTER TABLE products ADD COLUMN market VARCHAR(100) NULL")
             _safe_alter(conn, "CREATE INDEX idx_snapshot_at ON products(snapshot_at)")
             _safe_alter(conn, "CREATE INDEX idx_snapshot_id ON products(snapshot_id)")
+            _safe_alter(conn, "ALTER TABLE dashboard_memos ADD COLUMN image_path TEXT NULL")
+            _safe_alter(conn, "ALTER TABLE dashboard_memos ADD COLUMN image_paths JSON NULL")
 
             _normalize_mall_names(conn)
             conn.commit()

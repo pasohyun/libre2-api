@@ -167,6 +167,8 @@ class MallPriceInsightsResponse(BaseModel):
 class DashboardMemoCreateGlobal(BaseModel):
     body: str
     summary: Optional[str] = None
+    image_path: Optional[str] = None
+    image_paths: Optional[List[str]] = None
 
 
 class DashboardMemoCreateVendor(BaseModel):
@@ -174,6 +176,8 @@ class DashboardMemoCreateVendor(BaseModel):
     vendor_label: str
     body: str
     summary: Optional[str] = None
+    image_path: Optional[str] = None
+    image_paths: Optional[List[str]] = None
 
 
 class DashboardMemoOut(BaseModel):
@@ -183,6 +187,10 @@ class DashboardMemoOut(BaseModel):
     vendor_label: Optional[str] = None
     body: str
     summary: Optional[str] = None
+    image_path: Optional[str] = None
+    image_url: Optional[str] = None
+    image_paths: Optional[List[str]] = None
+    image_urls: Optional[List[str]] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 

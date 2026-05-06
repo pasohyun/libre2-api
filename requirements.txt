@@ -4,6 +4,7 @@
 fastapi
 uvicorn[standard]
 gunicorn
+python-multipart
 
 # -----------------------
 # Database
