@@ -180,6 +180,15 @@ class DashboardMemoCreateVendor(BaseModel):
     image_paths: Optional[List[str]] = None
 
 
+class DashboardMemoUpdate(BaseModel):
+    """부분 수정: 전달된 필드만 갱신. 첨부는 image_path / image_paths가 요청에 포함될 때만 변경."""
+
+    body: Optional[str] = None
+    summary: Optional[str] = None
+    image_path: Optional[str] = None
+    image_paths: Optional[List[str]] = None
+
+
 class DashboardMemoOut(BaseModel):
     id: int
     scope: str

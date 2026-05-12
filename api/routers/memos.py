@@ -17,6 +17,7 @@ from api.schemas import (
     DashboardMemoCreateVendor,
     DashboardMemoListVendor,
     DashboardMemoOut,
+    DashboardMemoUpdate,
 )
 from api.services.s3_storage import extract_object_key, generate_presigned_url, is_s3_enabled, upload_bytes
 
@@ -349,6 +350,82 @@ def list_all_vendor_memos(
         {"scope": _SCOPE_VENDOR, "limit": limit, "offset": offset},
     ).mappings().all()
     return DashboardMemoListVendor(count=count, items=[_row_to_out(r) for r in rows])
+
+
+@router.patch("/{memo_id}", response_model=DashboardMemoOut)
+def update_memo(memo_id: int, payload: DashboardMemoUpdate, db: Session = Depends(get_db)):
+    row = db.execute(
+        text(
+            f"""
+            {_MEMO_SELECT.strip()}
+            FROM dashboard_memos WHERE id = :id
+            """
+        ),
+        {"id": memo_id},
+    ).mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="memo not found")
+
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        raise HTTPException(status_code=400, detail="no fields to update")
+
+    sets: list[str] = []
+    params: dict = {"id": memo_id}
+
+    if "body" in data:
+        body = (data.get("body") or "").strip()
+        if not body:
+            raise HTTPException(status_code=422, detail="body cannot be empty")
+        if len(body) > _MAX_BODY:
+            raise HTTPException(status_code=422, detail="body too long")
+        sets.append("body = :body")
+        params["body"] = body
+
+    if "summary" in data:
+        raw_s = data.get("summary")
+        if raw_s is None:
+            summary_val = None
+        else:
+            summary_val = (str(raw_s) or "").strip() or None
+        if summary_val and len(summary_val) > _MAX_SUMMARY:
+            raise HTTPException(status_code=422, detail="summary too long")
+        sets.append("summary = :summary")
+        params["summary"] = summary_val
+
+    if "image_path" in data or "image_paths" in data:
+        paths = _collect_create_paths(
+            legacy_single=data.get("image_path"),
+            path_list=data.get("image_paths"),
+        )
+        json_paths = json.dumps(paths, ensure_ascii=False) if paths else None
+        legacy_col = paths[0] if paths else None
+        sets.append("image_path = :image_path")
+        sets.append("image_paths = :image_paths")
+        params["image_path"] = legacy_col
+        params["image_paths"] = json_paths
+
+    if not sets:
+        raise HTTPException(status_code=400, detail="no fields to update")
+
+    db.execute(
+        text(f"UPDATE dashboard_memos SET {', '.join(sets)} WHERE id = :id"),
+        params,
+    )
+    db.commit()
+
+    row2 = db.execute(
+        text(
+            f"""
+            {_MEMO_SELECT.strip()}
+            FROM dashboard_memos WHERE id = :id
+            """
+        ),
+        {"id": memo_id},
+    ).mappings().first()
+    if not row2:
+        raise HTTPException(status_code=500, detail="update failed")
+    return _row_to_out(row2)
 
 
 @router.delete("/{memo_id}")
