@@ -28,6 +28,8 @@ _crawl_running = False
 _crawl_last_started_at_kst = None
 _crawl_last_finished_at_kst = None
 _crawl_last_error = None
+_coupang_last_triggered_at_kst = None
+_coupang_last_trigger_result: dict | None = None
 
 try:
     from api.services.card_renderer import render_card_png
@@ -62,20 +64,28 @@ def _to_kst(dt):
     return dt.astimezone(KST)
 
 
-def _run_crawl_job():
+def _run_crawl_job(run_naver: bool = True):
     global _crawl_running, _crawl_last_started_at_kst, _crawl_last_finished_at_kst, _crawl_last_error
     try:
-        from scripts.crawl_naver import run_crawling
-
         _crawl_last_started_at_kst = datetime.now(KST)
         _crawl_last_error = None
-        run_crawling()
+        if run_naver:
+            from scripts.crawl_naver import run_crawling
+            run_crawling()
     except Exception as e:
         _crawl_last_error = str(e)
     finally:
         _crawl_last_finished_at_kst = datetime.now(KST)
         with _crawl_lock:
             _crawl_running = False
+
+
+def _trigger_coupang_remote():
+    """쿠팡 원격 트리거를 백그라운드 스레드에서 실행 (네이버 락과 무관하게 동작)."""
+    global _coupang_last_triggered_at_kst, _coupang_last_trigger_result
+    from api.services.coupang_remote import trigger_coupang_crawl
+    _coupang_last_triggered_at_kst = datetime.now(KST)
+    _coupang_last_trigger_result = trigger_coupang_crawl()
 
 
 def get_db():
@@ -1063,22 +1073,71 @@ def get_mall_price_insights(
 
 
 @router.post("/crawl/run")
-def run_crawl_now(background_tasks: BackgroundTasks):
+def run_crawl_now(
+    background_tasks: BackgroundTasks,
+    payload: dict | None = Body(default=None),
+):
     """
     수동 크롤링 실행 트리거 (대시보드 버튼용)
-    - 이미 실행 중이면 중복 실행을 막는다.
+    - payload.sources: ["naver", "coupang"] 중 하나 이상 (기본: ["naver"])
+    - 네이버: 로컬에서 직접 실행 (이미 실행 중이면 중복 실행 차단)
+    - 쿠팡: 회사 서버(사내망)로 SSH 트리거, fire-and-forget
     """
     global _crawl_running
-    with _crawl_lock:
-        if _crawl_running:
-            return {
-                "started": False,
-                "message": "Crawling job is already running",
-                "status": "running",
-            }
-        _crawl_running = True
-    background_tasks.add_task(_run_crawl_job)
-    return {"started": True, "message": "Crawling job started", "status": "started"}
+    sources_raw = (payload or {}).get("sources")
+    if not sources_raw:
+        sources = ["naver"]
+    else:
+        sources = [str(s).lower() for s in sources_raw if str(s).strip()]
+
+    run_naver = "naver" in sources
+    run_coupang = "coupang" in sources
+
+    if not run_naver and not run_coupang:
+        raise HTTPException(status_code=400, detail="sources에 naver 또는 coupang을 하나 이상 포함해야 합니다.")
+
+    response: dict = {"sources": sources}
+
+    if run_naver:
+        with _crawl_lock:
+            if _crawl_running:
+                response["naver"] = {
+                    "started": False,
+                    "status": "running",
+                    "message": "Naver crawling job is already running",
+                }
+            else:
+                _crawl_running = True
+                background_tasks.add_task(_run_crawl_job, run_naver=True)
+                response["naver"] = {
+                    "started": True,
+                    "status": "started",
+                    "message": "Naver crawling job started",
+                }
+
+    if run_coupang:
+        background_tasks.add_task(_trigger_coupang_remote)
+        response["coupang"] = {
+            "started": True,
+            "status": "triggered",
+            "message": "Coupang remote trigger dispatched (fire-and-forget)",
+        }
+
+    # 기존 프론트 호환을 위해 top-level started/status도 유지
+    naver_started = response.get("naver", {}).get("started", False)
+    coupang_started = response.get("coupang", {}).get("started", False)
+    response["started"] = bool(naver_started or coupang_started)
+    if naver_started and not run_coupang:
+        response["status"] = "started"
+        response["message"] = "Crawling job started"
+    elif run_naver and not naver_started and not run_coupang:
+        response["status"] = "running"
+        response["message"] = "Crawling job is already running"
+    else:
+        response["status"] = "started" if response["started"] else "running"
+        response["message"] = "Crawling triggered"
+
+    return response
 
 
 @router.get("/crawl/status")
@@ -1088,6 +1147,8 @@ def get_crawl_status():
         "last_started_at": _crawl_last_started_at_kst,
         "last_finished_at": _crawl_last_finished_at_kst,
         "last_error": _crawl_last_error,
+        "coupang_last_triggered_at": _coupang_last_triggered_at_kst,
+        "coupang_last_trigger_result": _coupang_last_trigger_result,
         "timezone": "Asia/Seoul",
     }
 

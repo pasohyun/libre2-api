@@ -24,6 +24,7 @@ boto3
 playwright
 beautifulsoup4
 lxml
+paramiko  # 회사 서버 쿠팡 크롤러 SSH 원격 트리거
 pandas  # crawl_naver.py에서 import (현재 미사용이지만 호환성을 위해 유지)
 numpy  # price_analytics (시계열 이상·추세)
 statsmodels  # price_analytics (Holt 지수평활 1스텝 예측)
