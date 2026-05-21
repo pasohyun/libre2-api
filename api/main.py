@@ -1,6 +1,9 @@
 # api/main.py
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
+load_dotenv()  # 최상단에서 .env 로드 (COUPANG_SSH_* 등 런타임 환경변수)
+
 from fastapi import BackgroundTasks, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

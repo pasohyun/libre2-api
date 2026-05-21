@@ -41,7 +41,7 @@ BRAND_STORES = [
         "url": "https://shop.coupang.com/glucofit/?platform=p",
         "seller": "글루코핏",
         "min_price": 0,
-        "name_filter": None,
+        "name_filter": r"리브레\s*2|libre\s*2",
     },
     {
         "url": "https://shop.coupang.com/A00158907/search?search=%EB%A6%AC%EB%B8%8C%EB%A0%882&platform=p",
