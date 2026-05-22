@@ -216,6 +216,20 @@ def _mall_name_std_sql(column_name: str) -> str:
     )
 
 
+# 화면 노출에서 제외할 product_name 패턴 (단어 경계, 대소문자 구분)
+# DB에는 남아있지만 사용자 화면용 응답에서 빼는 용도.
+# 새 패턴 추가 시 정규식 alternation으로 이어붙임. 예: "(^|[^A-Za-z0-9])(GS1|XYZ)([^A-Za-z0-9]|$)"
+_BANNED_PRODUCT_REGEXP = "(^|[^A-Za-z0-9])GS1([^A-Za-z0-9]|$)"
+
+
+def _banned_filter_sql(alias: str = "") -> str:
+    """차단 패턴 제외 WHERE 조각. alias가 있으면 'p.' 같은 prefix 붙여줌.
+    사용 예: f"... WHERE x=1 {_banned_filter_sql('p')}"
+    """
+    prefix = f"{alias}." if alias else ""
+    return f" AND {prefix}product_name NOT REGEXP '{_BANNED_PRODUCT_REGEXP}'"
+
+
 @router.get("/latest", response_model=ProductListResponse)
 def get_latest_products(db: Session = Depends(get_db)):
     """
@@ -237,7 +251,7 @@ def get_latest_products(db: Session = Depends(get_db)):
         )
 
         if snap_cnt > 0:
-            rows = db.execute(text("""
+            rows = db.execute(text(f"""
                 WITH latest_naver AS (
                     SELECT snapshot_id
                     FROM products
@@ -281,11 +295,12 @@ def get_latest_products(db: Session = Depends(get_db)):
                         )
                     )
                 )
+                {_banned_filter_sql('p')}
                 ORDER BY unit_price ASC
             """)).mappings().all()
         else:
             # snapshot_id 없는 구 DB / 로컬 덤프: 가장 최근 수집 시각의 행만 반환
-            rows = db.execute(text("""
+            rows = db.execute(text(f"""
                 WITH latest_ts AS (
                     SELECT MAX(COALESCE(snapshot_at, created_at)) AS ts FROM products
                 )
@@ -301,6 +316,7 @@ def get_latest_products(db: Session = Depends(get_db)):
                 CROSS JOIN latest_ts lt
                 WHERE lt.ts IS NOT NULL
                   AND COALESCE(p.snapshot_at, p.created_at) = lt.ts
+                  {_banned_filter_sql('p')}
                 ORDER BY unit_price ASC
             """)).mappings().all()
 
@@ -787,6 +803,7 @@ def get_tracked_malls_summary(
                 FROM products p
                 WHERE p.mall_name IN :mall_name_list
                   {channel_filter_sql}
+                  {_banned_filter_sql('p')}
                 ORDER BY COALESCE(p.snapshot_at, p.created_at) DESC, p.id DESC
                 LIMIT 1
             """), {"mall_name_list": mall_name_list, **channel_params}).fetchone()
@@ -803,6 +820,7 @@ def get_tracked_malls_summary(
                     WHERE mall_name IN :mall_name_list
                       AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
                       {channel_filter_sql}
+                      {_banned_filter_sql('p')}
                     GROUP BY DATE(created_at)
                 ) daily_prices
             """), {"mall_name_list": mall_name_list, **channel_params}).fetchone()
@@ -818,6 +836,7 @@ def get_tracked_malls_summary(
                   AND unit_price <= :target_price
                   AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
                   {channel_filter_sql}
+                  {_banned_filter_sql('p')}
             """), {"mall_name_list": mall_name_list, "target_price": config.TARGET_PRICE, **channel_params}).fetchone()
 
             results.append({
@@ -927,6 +946,7 @@ def get_tracked_malls_trends(
             WHERE {mall_name_std_expr} IN :mall_list
               AND created_at >= DATE_SUB(NOW(), INTERVAL :days DAY)
               {channel_filter_sql}
+              {_banned_filter_sql()}
             GROUP BY DATE(created_at), {mall_name_std_expr}
             ORDER BY date ASC
         """), {"mall_list": tuple(mall_list_pub), "days": days, **channel_params}).fetchall()
@@ -995,6 +1015,7 @@ def get_mall_timeline(
             WHERE p.mall_name IN :mall_name_list
               AND COALESCE(p.snapshot_at, p.created_at) >= DATE_SUB(NOW(), INTERVAL :days DAY)
               {channel_filter_sql}
+              {_banned_filter_sql('p')}
             ORDER BY COALESCE(p.snapshot_at, p.created_at) DESC
         """), params).fetchall()
 
