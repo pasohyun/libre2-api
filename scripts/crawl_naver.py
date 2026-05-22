@@ -764,9 +764,29 @@ def _norm_text(value) -> str:
     return (value or "").strip()
 
 
+# save_to_db 진입 전에 차단할 product_name 패턴 (단어 경계, 대소문자 구분)
+# 새 패턴 추가 시 여기 리스트에 정규식 추가
+_BANNED_PRODUCT_PATTERNS = [
+    re.compile(r"(^|[^A-Za-z0-9])GS1([^A-Za-z0-9]|$)"),
+]
+
+
+def _is_banned_product(name) -> bool:
+    if not name:
+        return False
+    return any(p.search(name) for p in _BANNED_PRODUCT_PATTERNS)
+
+
 # ✅ (2) save_to_db 시그니처 변경 + INSERT 컬럼 추가
 def save_to_db(rows, *, snapshot_id: str, snapshot_at: datetime):
     import os
+
+    # 차단 패턴 필터링 (GS1 등 비-리브레2 상품 적재 방지)
+    before = len(rows)
+    rows = [r for r in rows if not _is_banned_product(r.get("product_name"))]
+    skipped = before - len(rows)
+    if skipped:
+        _log(f"🚫 차단 패턴 매칭 {skipped}건 skip (총 {before} → {len(rows)})")
 
     _log(f"🔍 환경 변수 확인:")
     _log(f"   MYSQLHOST: {os.getenv('MYSQLHOST')}")
