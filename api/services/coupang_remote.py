@@ -14,6 +14,7 @@ import logging
 import os
 import shlex
 import socket
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -65,11 +66,13 @@ def trigger_coupang_crawl(*, connect_timeout: float = 10.0) -> dict:
             "message": "COUPANG_SSH_* 환경변수가 설정되지 않았습니다.",
         }
 
-    # crontab과 동일한 명령어를 nohup으로 감싸 백그라운드 실행
-    # 로그는 회사 서버의 coupang_manual.log 로 남긴다 (정기 실행 로그와 분리)
+    # crontab과 동일한 명령어를 nohup + setsid로 감싸 SSH 채널 종료 후에도 살아남게.
+    # paramiko exec_command + 채널 close 시 일반 nohup만으론 SIGHUP을 못 막는 케이스가 있어
+    # setsid로 새 세션에 분리해 detach를 강제한다.
+    # 로그는 회사 서버의 coupang_manual.log 로 남긴다 (정기 cron 로그와 분리).
     remote_cmd = (
         f"cd {shlex.quote(cfg.workdir)} && "
-        f"nohup {cfg.python} -m {cfg.module} "
+        f"nohup setsid {cfg.python} -m {cfg.module} "
         f">> coupang_manual.log 2>&1 < /dev/null &"
     )
 
@@ -88,14 +91,36 @@ def trigger_coupang_crawl(*, connect_timeout: float = 10.0) -> dict:
             look_for_keys=False,
         )
         # exec_command는 비차단으로 명령을 보낸다.
-        # nohup ... & 로 백그라운드화했으므로 채널을 바로 닫아도 서버 측 프로세스는 계속 돈다.
-        client.exec_command(f"bash -lc {shlex.quote(remote_cmd)}", timeout=connect_timeout)
-        logger.info("Coupang remote crawl triggered on %s:%s", cfg.host, cfg.port)
-        return {
+        # setsid+nohup으로 detach 했으므로 채널을 바로 닫아도 서버 측 프로세스는 계속 돈다.
+        stdin, stdout, stderr = client.exec_command(
+            f"bash -c {shlex.quote(remote_cmd)}",
+            timeout=connect_timeout,
+        )
+        # 짧게 대기 후 stderr 일부만 읽어서 "즉시 실패" (command not found, permission denied 등) 캡처.
+        # 백그라운드로 정상 detach 됐다면 stderr는 비어있다.
+        time.sleep(0.8)
+        immediate_stderr = ""
+        try:
+            if stderr.channel.recv_stderr_ready():
+                immediate_stderr = stderr.channel.recv_stderr(2048).decode("utf-8", errors="ignore").strip()
+        except Exception:
+            pass
+
+        logger.info(
+            "Coupang remote crawl triggered on %s:%s (immediate_stderr=%r)",
+            cfg.host, cfg.port, immediate_stderr,
+        )
+        result: dict = {
             "status": "triggered",
             "host": cfg.host,
             "module": cfg.module,
+            "workdir": cfg.workdir,
         }
+        if immediate_stderr:
+            # 즉시 stderr가 있다면 보통 detach 실패 또는 명령어 오류 → 표시
+            result["status"] = "error"
+            result["message"] = f"Remote stderr: {immediate_stderr[:500]}"
+        return result
     except (paramiko.SSHException, socket.error, OSError) as e:
         logger.exception("Coupang SSH trigger failed")
         return {"status": "error", "message": f"SSH trigger failed: {e}"}
