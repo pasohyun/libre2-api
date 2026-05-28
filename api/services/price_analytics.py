@@ -4,7 +4,7 @@
 - 이상치: 지연 롤링 중앙값 대비 잔차의 MAD 기반 modified z-score (Iglewicz & Hoaglin).
 - 단기 예측: statsmodels Holt 가법 지수평활(추세 가산) 1스텝; 실패·관측 부족 시 OLS 폴백.
 
-스냅샷 밀도: api/scheduler.py 기본과 같이 하루 4회(06/12/18/00 KST)를 가정한다.
+스냅샷 밀도: api/scheduler.py 기본과 같이 하루 6회(03/06/09/15/18/21 KST)를 가정한다.
 롤링·적합 최대 길이는 `SNAPSHOTS_PER_DAY`를 곱해 ‘일’ 단위로 맞춘다.
 """
 
@@ -25,9 +25,9 @@ MODIFIED_Z_THRESHOLD = float(
 )
 
 # 하루 스냅샷 수 (스케줄 변경 시 PRICE_ANALYTICS_SNAPSHOTS_PER_DAY 로 맞출 것)
-SNAPSHOTS_PER_DAY = int(os.getenv("PRICE_ANALYTICS_SNAPSHOTS_PER_DAY", "4"))
+SNAPSHOTS_PER_DAY = int(os.getenv("PRICE_ANALYTICS_SNAPSHOTS_PER_DAY", "6"))
 
-# 베이스라인: 약 7일치 스냅샷 (4회/일 → 28개)
+# 베이스라인: 약 7일치 스냅샷 (6회/일 → 42개)
 ROLL_BASELINE_DAYS = int(os.getenv("PRICE_ANALYTICS_BASELINE_DAYS", "7"))
 ROLL_BASELINE = SNAPSHOTS_PER_DAY * ROLL_BASELINE_DAYS
 

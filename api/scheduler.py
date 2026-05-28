@@ -13,10 +13,10 @@ _thread: threading.Thread | None = None
 _stop_event = threading.Event()
 
 # 크롤링 시각 (KST 기준, 환경변수로 덮어쓰기 가능)
-# 기본: 06:00 / 12:00 / 18:00 / 00:00
+# 기본: 03:00 / 06:00 / 09:00 / 15:00 / 18:00 / 21:00
 CRAWL_TIMES_KST = [
     t.strip()
-    for t in os.getenv("CRAWL_TIMES_KST", "06:00,12:00,18:00,00:00").split(",")
+    for t in os.getenv("CRAWL_TIMES_KST", "03:00,06:00,09:00,15:00,18:00,21:00").split(",")
     if t.strip()
 ]
 ALERT_SEND_TIME_KST = os.getenv("ALERT_SEND_TIME_KST", "09:00").strip() or "09:00"
