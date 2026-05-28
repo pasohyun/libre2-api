@@ -770,11 +770,21 @@ _BANNED_PRODUCT_PATTERNS = [
     re.compile(r"(^|[^A-Za-z0-9])GS1([^A-Za-z0-9]|$)"),
 ]
 
+# 정확히 일치하는 product_name을 차단 (TRIM 후 비교). 케이스/액세서리가
+# 리브레2 키워드로 검색에 잡혀 들어오는 케이스 대응. 새 상품명 추가 시
+# 그대로 문자열을 넣으면 됨.
+_BANNED_PRODUCT_EXACT = {
+    "프리스타일 리브레, 리브레 2, 14일, hd(블랙)",
+}
+
 
 def _is_banned_product(name) -> bool:
     if not name:
         return False
-    return any(p.search(name) for p in _BANNED_PRODUCT_PATTERNS)
+    name_norm = name.strip()
+    if name_norm in _BANNED_PRODUCT_EXACT:
+        return True
+    return any(p.search(name_norm) for p in _BANNED_PRODUCT_PATTERNS)
 
 
 # ✅ (2) save_to_db 시그니처 변경 + INSERT 컬럼 추가

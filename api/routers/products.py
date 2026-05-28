@@ -218,8 +218,14 @@ def _mall_name_std_sql(column_name: str) -> str:
 
 # 화면 노출에서 제외할 product_name 패턴 (단어 경계, 대소문자 구분)
 # DB에는 남아있지만 사용자 화면용 응답에서 빼는 용도.
-# 새 패턴 추가 시 정규식 alternation으로 이어붙임. 예: "(^|[^A-Za-z0-9])(GS1|XYZ)([^A-Za-z0-9]|$)"
+# 새 키워드 추가 시 정규식 alternation으로 이어붙임. 예: "(^|[^A-Za-z0-9])(GS1|XYZ)([^A-Za-z0-9]|$)"
 _BANNED_PRODUCT_REGEXP = "(^|[^A-Za-z0-9])GS1([^A-Za-z0-9]|$)"
+
+# 정확히 일치하는 product_name 차단 (TRIM 후 비교).
+# 케이스/액세서리가 리브레2 키워드로 검색에 잡혀 들어오는 케이스 대응.
+_BANNED_PRODUCT_EXACT: tuple[str, ...] = (
+    "프리스타일 리브레, 리브레 2, 14일, hd(블랙)",
+)
 
 
 def _banned_filter_sql(alias: str = "") -> str:
@@ -227,7 +233,11 @@ def _banned_filter_sql(alias: str = "") -> str:
     사용 예: f"... WHERE x=1 {_banned_filter_sql('p')}"
     """
     prefix = f"{alias}." if alias else ""
-    return f" AND {prefix}product_name NOT REGEXP '{_BANNED_PRODUCT_REGEXP}'"
+    clauses = [f" AND {prefix}product_name NOT REGEXP '{_BANNED_PRODUCT_REGEXP}'"]
+    for exact in _BANNED_PRODUCT_EXACT:
+        escaped = exact.replace("'", "''")  # SQL 단일 따옴표 escape
+        clauses.append(f" AND TRIM({prefix}product_name) <> '{escaped}'")
+    return "".join(clauses)
 
 
 @router.get("/latest", response_model=ProductListResponse)
