@@ -219,8 +219,9 @@ def _mall_name_std_sql(column_name: str) -> str:
 # 화면 노출에서 제외할 product_name 패턴 (단어 경계, 대소문자 구분)
 # DB에는 남아있지만 사용자 화면용 응답에서 빼는 용도.
 # 새 키워드 추가 시 정규식 alternation으로 이어붙임. 예: "(^|[^A-Za-z0-9])(GS1|XYZ)([^A-Za-z0-9]|$)"
-# '피코링'은 별도 제조사 제품으로 리브레2와 묶여 비싸게 들어오는 케이스가 있어 차단.
-_BANNED_PRODUCT_REGEXP = "(^|[^A-Za-z0-9])GS1([^A-Za-z0-9]|$)|피코링"
+# '피코링', '바로잰'은 타사 연속혈당측정기 제품으로 리브레2와 묶여 들어오는 케이스가 있어 차단.
+# 새 묶음 브랜드 발견 시 alternation에 추가.
+_BANNED_PRODUCT_REGEXP = "(^|[^A-Za-z0-9])GS1([^A-Za-z0-9]|$)|피코링|바로잰"
 
 # 정확히 일치하는 product_name 차단 (TRIM 후 비교).
 # 케이스/액세서리가 리브레2 키워드로 검색에 잡혀 들어오는 케이스 대응.
