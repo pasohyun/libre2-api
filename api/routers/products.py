@@ -779,6 +779,18 @@ def get_tracked_malls_summary(
             ORDER BY COUNT(*) DESC, MIN(unit_price) ASC
         """), {"channel": channel}).fetchall()
         mall_list = [row[0] for row in all_naver_malls]
+    elif channel == "coupang":
+        # 쿠팡 채널도 전체 기간 한 번이라도 등장한 판매처를 모두 노출.
+        # 최신 스냅샷 기준으로 잡으면 그 회차에 0건 매장(닥터다이어리/글루코핏 등)이 카드에서 사라지는 문제.
+        mall_name_std_expr = _mall_name_std_sql("mall_name")
+        all_coupang_malls = db.execute(text(f"""
+            SELECT {mall_name_std_expr} AS mall_name
+            FROM products
+            WHERE channel = :channel
+            GROUP BY {mall_name_std_expr}
+            ORDER BY COUNT(*) DESC, MIN(unit_price) ASC
+        """), {"channel": channel}).fetchall()
+        mall_list = [row[0] for row in all_coupang_malls]
     else:
         top_malls = db.execute(text(f"""
             WITH latest AS (
