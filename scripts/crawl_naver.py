@@ -768,6 +768,8 @@ def _norm_text(value) -> str:
 # 새 패턴 추가 시 여기 리스트에 정규식 추가
 _BANNED_PRODUCT_PATTERNS = [
     re.compile(r"(^|[^A-Za-z0-9])GS1([^A-Za-z0-9]|$)"),
+    # '피코링'(별도 제조사 연속혈당측정기)이 포함된 묶음 세트는 가격이 합산되어 추이를 왜곡함
+    re.compile(r"피코링"),
 ]
 
 # 정확히 일치하는 product_name을 차단 (TRIM 후 비교). 케이스/액세서리가
