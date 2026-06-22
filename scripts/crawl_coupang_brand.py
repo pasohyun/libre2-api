@@ -300,85 +300,120 @@ def _new_page(browser, mode: str):
     return context.new_page()
 
 
-def crawl_brand_store(browser, mode: str, url: str) -> List[Dict[str, Any]]:
-    """브랜드 스토어 페이지를 크롤링한다 (브라우저는 호출자가 관리)."""
+def crawl_brand_store(browser, mode: str, url: str, max_attempts: int = 3) -> List[Dict[str, Any]]:
+    """브랜드 스토어 페이지를 크롤링한다 (브라우저는 호출자가 관리).
+
+    쿠팡 봇차단(Access Denied 인터스티셜)과 그로 인한 자동 리로드 때문에
+    추출 도중 'Execution context was destroyed'(navigation) 가 발생하면
+    페이지를 새로 열어 max_attempts 회까지 재시도한다. 한 스토어가 실패해도
+    매 스냅샷이 비지 않도록 하는 게 목적.
+    """
     print(f"[BRAND] 크롤링: {url}")
-    page = _new_page(browser, mode)
+    last_err: Any = None
 
-    try:
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(5000)
-
-        # Access Denied 감지 시 재시도
-        title = page.title()
-        if "Access Denied" in title or "denied" in title.lower():
-            print("  [RETRY] Access Denied 감지, 재시도...")
-            page.wait_for_timeout(3000)
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    for attempt in range(1, max_attempts + 1):
+        page = _new_page(browser, mode)
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=40000)
             page.wait_for_timeout(5000)
 
-        # 점진적 스크롤로 lazy-load 상품 전부 로딩
-        prev_count = 0
-        for scroll_i in range(30):
-            page.evaluate(f"window.scrollTo(0, {(scroll_i + 1) * 1000})")
-            page.wait_for_timeout(800)
-            cur_count = page.evaluate(
-                "document.querySelectorAll('a[href*=\"/products/\"]').length"
-            )
-            if cur_count == prev_count and scroll_i > 3:
-                break
-            prev_count = cur_count
-
-        title = page.title()
-        print(f"  페이지: {title}")
-
-        data = page.evaluate(JS_EXTRACT)
-        print(f"  추출: {len(data)}개")
-
-        if not data:
-            print("  [WARN] 상품을 찾지 못했습니다.")
-            os.makedirs("screenshots", exist_ok=True)
-            ss = f"screenshots/brand_store_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            page.screenshot(path=ss, full_page=True)
-            print(f"  스크린샷: {ss}")
-            return []
-
-        products = []
-        for item in data:
-            name = _extract_product_name(item["lines"])
-            full_text = "\n".join(item["lines"])
-            price = _pick_sale_price(item["prices"], full_text)
-            href = item["href"]
-            if not href.startswith("http"):
-                href = f"https://www.coupang.com{href}"
-
-            if not name or price <= 0:
+            # Access Denied 감지 시 이 시도는 버리고 새 페이지로 재시도
+            title = page.title()
+            if "Access Denied" in title or "denied" in title.lower():
+                last_err = "Access Denied"
+                print(f"  [RETRY {attempt}/{max_attempts}] Access Denied 감지")
+                if attempt < max_attempts:
+                    time.sleep(5)
                 continue
 
-            products.append({
-                "product_name": name,
-                "total_price": price,
-                "link": href,
-                "image_url": item["imgSrc"] or "",
-            })
+            # 봇차단 리다이렉트/리로드가 끝날 때까지 잠깐 안정화 (없으면 evaluate 중 navigation 으로 터짐)
+            try:
+                page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
 
-        return products
+            # 점진적 스크롤로 lazy-load 상품 전부 로딩
+            prev_count = 0
+            for scroll_i in range(30):
+                page.evaluate(f"window.scrollTo(0, {(scroll_i + 1) * 1000})")
+                page.wait_for_timeout(800)
+                cur_count = page.evaluate(
+                    "document.querySelectorAll('a[href*=\"/products/\"]').length"
+                )
+                if cur_count == prev_count and scroll_i > 3:
+                    break
+                prev_count = cur_count
 
-    except Exception as e:
-        print(f"  [ERROR] 크롤링 실패: {e}")
-        try:
-            os.makedirs("screenshots", exist_ok=True)
-            ss = f"screenshots/brand_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            page.screenshot(path=ss, full_page=True)
-            print(f"  에러 스크린샷: {ss}")
-        except Exception:
-            pass
-        return []
-    finally:
-        try:
-            page.close()
-        except Exception:
-            pass
+            title = page.title()
+            print(f"  페이지: {title}")
+
+            data = page.evaluate(JS_EXTRACT)
+            print(f"  추출: {len(data)}개")
+
+            if not data:
+                last_err = "상품 0개"
+                if attempt < max_attempts:
+                    print(f"  [RETRY {attempt}/{max_attempts}] 상품 0개, 재시도")
+                    time.sleep(5)
+                    continue
+                print("  [WARN] 상품을 찾지 못했습니다.")
+                os.makedirs("screenshots", exist_ok=True)
+                ss = f"screenshots/brand_store_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                page.screenshot(path=ss, full_page=True)
+                print(f"  스크린샷: {ss}")
+                return []
+
+            products = []
+            for item in data:
+                name = _extract_product_name(item["lines"])
+                full_text = "\n".join(item["lines"])
+                price = _pick_sale_price(item["prices"], full_text)
+                href = item["href"]
+                if not href.startswith("http"):
+                    href = f"https://www.coupang.com{href}"
+
+                if not name or price <= 0:
+                    continue
+
+                products.append({
+                    "product_name": name,
+                    "total_price": price,
+                    "link": href,
+                    "image_url": item["imgSrc"] or "",
+                })
+
+            return products
+
+        except Exception as e:
+            msg = str(e)
+            last_err = msg
+            # navigation/리로드/세션종료 류는 새 페이지로 재시도하면 살아나는 경우가 많음
+            retryable = (
+                "Execution context was destroyed" in msg
+                or "navigation" in msg.lower()
+                or "Target closed" in msg
+                or "Target page" in msg
+            )
+            print(f"  [ERROR] 크롤링 실패 (attempt {attempt}/{max_attempts}): {msg[:120]}")
+            if attempt < max_attempts and retryable:
+                time.sleep(5)
+                continue
+            try:
+                os.makedirs("screenshots", exist_ok=True)
+                ss = f"screenshots/brand_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                page.screenshot(path=ss, full_page=True)
+                print(f"  에러 스크린샷: {ss}")
+            except Exception:
+                pass
+            return []
+        finally:
+            try:
+                page.close()
+            except Exception:
+                pass
+
+    print(f"  [FAIL] {max_attempts}회 재시도 모두 실패: {last_err}")
+    return []
 
 
 def run_crawling():
