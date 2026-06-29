@@ -300,13 +300,19 @@ def _new_page(browser, mode: str):
     return context.new_page()
 
 
-def crawl_brand_store(browser, mode: str, url: str, max_attempts: int = 3) -> List[Dict[str, Any]]:
+def crawl_brand_store(browser, mode: str, url: str, max_attempts: int = 3) -> "tuple[List[Dict[str, Any]], bool]":
     """브랜드 스토어 페이지를 크롤링한다 (브라우저는 호출자가 관리).
 
     쿠팡 봇차단(Access Denied 인터스티셜)과 그로 인한 자동 리로드 때문에
     추출 도중 'Execution context was destroyed'(navigation) 가 발생하면
     페이지를 새로 열어 max_attempts 회까지 재시도한다. 한 스토어가 실패해도
     매 스냅샷이 비지 않도록 하는 게 목적.
+
+    반환: (상품리스트, blocked)
+      - blocked=True 면 Access Denied/navigation 으로 전멸한 것 → 호출자가
+        새 IP로 브라우저를 재연결해 한 번 더 시도해볼 가치가 있음.
+      - blocked=False 면 정상 추출했거나(상품 있음) 페이지는 떴는데 상품이 0개
+        (= 그 스토어가 실제로 비어있음)이라 IP를 바꿔도 의미 없음.
     """
     print(f"[BRAND] 크롤링: {url}")
     last_err: Any = None
@@ -361,7 +367,7 @@ def crawl_brand_store(browser, mode: str, url: str, max_attempts: int = 3) -> Li
                 ss = f"screenshots/brand_store_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
                 page.screenshot(path=ss, full_page=True)
                 print(f"  스크린샷: {ss}")
-                return []
+                return [], False
 
             products = []
             for item in data:
@@ -382,7 +388,7 @@ def crawl_brand_store(browser, mode: str, url: str, max_attempts: int = 3) -> Li
                     "image_url": item["imgSrc"] or "",
                 })
 
-            return products
+            return products, False
 
         except Exception as e:
             msg = str(e)
@@ -405,7 +411,7 @@ def crawl_brand_store(browser, mode: str, url: str, max_attempts: int = 3) -> Li
                 print(f"  에러 스크린샷: {ss}")
             except Exception:
                 pass
-            return []
+            return [], True
         finally:
             try:
                 page.close()
@@ -413,7 +419,7 @@ def crawl_brand_store(browser, mode: str, url: str, max_attempts: int = 3) -> Li
                 pass
 
     print(f"  [FAIL] {max_attempts}회 재시도 모두 실패: {last_err}")
-    return []
+    return [], True
 
 
 def run_crawling():
@@ -426,6 +432,7 @@ def run_crawling():
 
     all_rows = []
     batch_size = 10
+    reopen_budget = 8  # 차단 지속 시 '새 IP 재연결 후 재시도'를 허용하는 총 횟수 (비용/시간 보호)
 
     with sync_playwright() as p:
         for batch_start in range(0, len(BRAND_STORES), batch_size):
@@ -450,7 +457,24 @@ def run_crawling():
                     if i > 0:
                         time.sleep(8)
 
-                    raw_products = crawl_brand_store(browser, mode, url)
+                    raw_products, blocked = crawl_brand_store(browser, mode, url)
+
+                    # 차단(Access Denied/navigation)으로 전멸하면 막힌 IP를 버리고
+                    # 브라우저를 새로 연결(=새 IP)해 그 스토어만 1회 더 시도한다.
+                    # 재연결 후엔 같은 배치의 다음 스토어들도 새 IP를 쓰게 된다.
+                    if not raw_products and blocked and reopen_budget > 0:
+                        reopen_budget -= 1
+                        print(f"  [REOPEN] {seller} 차단 지속 → 브라우저 새 IP로 재연결 후 재시도 (남은 {reopen_budget})")
+                        try:
+                            browser.close()
+                        except Exception:
+                            pass
+                        time.sleep(10)
+                        try:
+                            browser, mode = _open_browser(p)
+                            raw_products, blocked = crawl_brand_store(browser, mode, url)
+                        except Exception as reopen_err:
+                            print(f"  [REOPEN] 재연결 실패: {reopen_err}")
 
                     if not raw_products:
                         print(f"  [{seller}] 크롤링된 상품 없음")
