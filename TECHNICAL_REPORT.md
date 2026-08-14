@@ -13,7 +13,8 @@
 - 네이버 쇼핑 API를 통한 자동 가격 크롤링
 - 상품 단가 자동 계산 (세트/묶음 상품 분석)
 - REST API를 통한 가격 데이터 제공
-- 매일 2회 자동 크롤링 (00:00 KST, 12:00 KST)
+- 매일 6회 자동 크롤링 (03:00 / 06:00 / 09:00 / 15:00 / 18:00 / 21:00 KST)
+  - 네이버: Railway Cron Job / 쿠팡: 회사 서버 crontab
 
 ---
 
@@ -65,7 +66,7 @@ daewoong/
 
 ```
 ┌─────────────────┐
-│  Railway Cron   │  ← 매일 00:00, 12:00 KST 실행
+│  Railway Cron   │  ← 매일 03/06/09/15/18/21 KST 실행
 │      Job        │
 └────────┬────────┘
          │
@@ -458,35 +459,38 @@ app.add_middleware(
 ### 7.1 Railway 서비스 구성
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      Railway Project                         │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐ │
-│  │    Web      │      │  Cron Job A │      │  Cron Job B │ │
-│  │   Service   │      │  (00:00 KST)│      │  (12:00 KST)│ │
-│  │             │      │             │      │             │ │
-│  │  FastAPI    │      │  crawl_     │      │  crawl_     │ │
-│  │  + Gunicorn │      │  naver.py   │      │  naver.py   │ │
-│  └──────┬──────┘      └──────┬──────┘      └──────┬──────┘ │
-│         │                    │                    │        │
-│         └────────────────────┼────────────────────┘        │
-│                              │                             │
-│                              ▼                             │
-│                    ┌─────────────────┐                     │
-│                    │     MySQL       │                     │
-│                    │    Service      │                     │
-│                    │                 │                     │
-│                    │  products 테이블 │                     │
-│                    └─────────────────┘                     │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                       Railway Project                        │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│   ┌─────────────┐          ┌──────────────────────────┐      │
+│   │    Web      │          │    Cron Job (네이버)      │      │
+│   │   Service   │          │  하루 6회                 │      │
+│   │             │          │  03/06/09/15/18/21 KST   │      │
+│   │  FastAPI    │          │                          │      │
+│   │  + Gunicorn │          │     crawl_naver.py       │      │
+│   └──────┬──────┘          └────────────┬─────────────┘      │
+│          │                              │                    │
+│          └──────────────┬───────────────┘                    │
+│                         ▼                                    │
+│               ┌─────────────────┐                            │
+│               │     MySQL       │ ◀── 회사 서버 crontab       │
+│               │    Service      │     (쿠팡, 하루 6회)         │
+│               │                 │     crawl_coupang_brand.py │
+│               │ products 테이블  │     via Bright Data        │
+│               └─────────────────┘                            │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
 ```
+
+쿠팡 크롤러는 Railway가 아닌 **회사 서버(사내망) crontab**에서 실행되며, 결과만 같은 Railway MySQL에
+적재합니다. 대시보드의 수동 크롤링 버튼은 `api/services/coupang_remote.py`가 SSH로 이 서버를
+트리거하는 방식입니다.
 
 ### 7.2 Procfile
 
 ```procfile
-web: gunicorn api.main:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
+web: gunicorn api.main:app --workers 1 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
 ```
 
 ### 7.3 환경 변수
@@ -508,7 +512,9 @@ web: gunicorn api.main:app --workers 2 --worker-class uvicorn.workers.UvicornWor
 | `MYSQLPORT` | ${{ MySQL.MYSQLPORT }} | MySQL 포트 |
 | `NAVER_CLIENT_ID` | (API Key) | 네이버 API 클라이언트 ID |
 | `NAVER_CLIENT_SECRET` | (API Secret) | 네이버 API 시크릿 |
-| `ENABLE_DB_SAVE` | true | DB 저장 활성화 |
+
+> DB 저장은 위 `MYSQL*` 5개 변수만으로 동작합니다. `ENABLE_DB_SAVE`는 `config.py:23`에 정의만 되어 있고
+> 이를 참조하는 코드가 없어, 설정 여부가 저장 동작에 영향을 주지 않습니다.
 
 ---
 
