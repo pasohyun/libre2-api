@@ -20,8 +20,10 @@
 7. [API 엔드포인트](#7-api-엔드포인트)
 8. [환경 변수](#8-환경-변수)
 9. [로컬 개발](#9-로컬-개발)
-10. [운영 가이드 · 트러블슈팅](#10-운영-가이드--트러블슈팅)
-11. [인수인계 체크리스트](#11-인수인계-체크리스트)
+10. [Railway 배포 (web · 네이버 크롤러)](#10-railway-배포-web--네이버-크롤러)
+11. [쿠팡 크롤러 운영 (회사 서버)](#11-쿠팡-크롤러-운영-회사-서버)
+12. [운영 가이드 · 트러블슈팅](#12-운영-가이드--트러블슈팅)
+13. [인수인계 체크리스트](#13-인수인계-체크리스트)
 
 ---
 
@@ -30,13 +32,13 @@
 ```
                                   ┌────────────────────────┐
    네이버 쇼핑 오픈API  ──────────▶│  scripts/crawl_naver   │
-                                  └───────────┬────────────┘
+   (Railway Cron)                 └───────────┬────────────┘
                                               │  analyze_product() → 단가 산출
                                               │  save_to_db()      → 스냅샷 저장
    쿠팡 브랜드스토어(21곳)         ┌───────────▼────────────┐
    Playwright + Bright Data ─────▶│  MySQL (products 외 5) │
-   scripts/crawl_coupang_brand    └───────────┬────────────┘
-                                              │
+   (회사 서버 crontab)             └───────────┬────────────┘
+   scripts/crawl_coupang_brand                │
                                   ┌───────────▼────────────┐        ┌──────────────┐
                                   │  FastAPI (api/)        │◀──────▶│  React 대시보드│
                                   │  JWT 인증 · 조회/리포트 │  CORS  │   (Vercel)   │
@@ -56,6 +58,9 @@
 `단가 = 총가격 ÷ 수량`으로 정규화합니다. 이 로직이 `scripts/crawl_naver.py`의 `analyze_product()`이며,
 쿠팡 크롤러도 저장 시 동일 함수를 재사용합니다. **모니터링 지표는 전부 단가 기준입니다.**
 
+**크롤링 주기**: 매일 **03:00 / 06:00 / 09:00 / 15:00 / 18:00 / 21:00 KST (하루 6회)**
+네이버는 Railway Cron Job, 쿠팡은 회사 서버 crontab에서 각각 같은 시각에 실행됩니다.
+
 ---
 
 ## 2. 기술 스택
@@ -65,11 +70,11 @@
 | 언어 / 런타임 | Python 3.11 (`runtime.txt`) |
 | 웹 프레임워크 | FastAPI + Uvicorn (gunicorn UvicornWorker로 서빙) |
 | DB | MySQL 8.x, SQLAlchemy(Core 위주 raw SQL) + PyMySQL / mysql-connector |
-| 크롤링 | 네이버 쇼핑 **오픈 API**(HTTP), 쿠팡 **Playwright + Bright Data 프록시/원격 브라우저** |
+| 크롤링 | 네이버 쇼핑 **오픈 API**(HTTP), 쿠팡 **Playwright + Bright Data Scraping Browser** |
 | 인증 | 공유 비밀번호 → JWT(HS256, 만료 1일) |
 | 저장소/알림 | AWS S3(증빙 카드 PNG), SMTP(일일 알림 메일), OpenAI Responses API(리포트 요약, 선택) |
 | 분석 | numpy · statsmodels (MAD 이상탐지, Holt/OLS 단기예측) |
-| 배포 | Railway(web) / 사내 서버 crontab(쿠팡 크롤러) |
+| 배포 | Railway(web · 네이버 크롤러) / 회사 서버 crontab(쿠팡 크롤러) |
 
 > ⚠️ `requirements.txt`에는 **버전이 고정되어 있지 않습니다.** 재설치 시점에 따라 FastAPI·Pydantic 메이저 버전이
 > 바뀔 수 있으므로, 운영 서버에서 `pip freeze > requirements.lock.txt`로 현재 버전을 남겨두길 권장합니다.
@@ -86,25 +91,27 @@
 |--------|------|------|
 | `origin` / `github` | github.com/pasohyun/libre2-api | **실질 소스. `main`이 항상 최신** |
 | `gitlab` | gitlab.daewoong.co.kr/…/libre-2-price-monitor | 사내 보안 스캔용. **`main`은 빈 basic-template**이라 실제 코드 없음. protected라 직접 push 불가(MR 필요) |
-| `gitlab` 브랜치 `feat/server-test` | — | **사내 서버에 실제로 체크아웃되어 있는 브랜치** |
+| `gitlab` 브랜치 `feat/server-test` | — | **회사 서버에 실제로 체크아웃되어 있는 브랜치** |
 
 ### 실행 주체
 
 | 실행 대상 | 위치 | 방식 |
 |-----------|------|------|
 | API 서버 (`web`) | Railway | `Procfile` → `gunicorn api.main:app -k UvicornWorker --workers 1` |
-| 네이버 크롤러 | Railway Cron Job | `python -m scripts.crawl_naver` |
-| **쿠팡 브랜드 크롤러** | **사내 서버 crontab** | `0 3,6,9,15,18,21` KST → `.venv/bin/python -m scripts.crawl_coupang_brand`, 로그 `coupang_cron.log` |
+| 네이버 크롤러 | Railway Cron Job | `python -m scripts.crawl_naver` (하루 6회) |
+| **쿠팡 브랜드 크롤러** | **회사 서버 crontab** | `0 3,6,9,15,18,21` KST → `.venv/bin/python -m scripts.crawl_coupang_brand` |
 | DB (MySQL) | Railway MySQL | 네이버·쿠팡 공용 |
 | 프론트엔드 | Vercel | 별도 저장소 |
 
-**쿠팡 크롤러가 사내 서버에 있는 이유**: 쿠팡 봇 차단 회피를 위해 Bright Data 프록시 + 고정 회선이 필요하기 때문입니다.
-대시보드의 "수동 크롤링" 버튼은 `api/services/coupang_remote.py`가 **SSH(paramiko)로 사내 서버에 접속해 fire-and-forget 실행**합니다.
-접속 정보는 `.env`의 `COUPANG_SSH_*` 항목이며(저장소에 커밋 금지), 호출자가 사내망/VPN에 있어야 동작합니다.
+> ⚠️ **회사 서버는 사내 GitLab을 바라보는 클론이고, cron이 working-tree 파일을 직접 실행합니다(브랜치 무관).**
+> GitHub `main`에 올린 수정은 서버에 자동 반영되지 않습니다. 반영하려면 `feat/server-test`에서
+> 서버 로컬 수정을 먼저 커밋한 뒤 `git fetch origin && git cherry-pick <main 커밋>` 순서로 진행하세요.
+> **`git pull`로 덮어쓰면 서버 전용 수정이 사라집니다.**
 
-> ⚠️ **사내 서버는 cron이 working-tree 파일을 직접 실행합니다(브랜치 무관).**
-> 서버에 패치를 반영하려면 `feat/server-test`에서 서버 로컬 수정을 먼저 커밋한 뒤
-> `git fetch origin && git cherry-pick <main 커밋>` 순서로 진행하세요. **`git pull`로 덮어쓰면 서버 전용 수정이 날아갑니다.**
+> ⚠️ **크롤러 공용 로직 주의**: `scripts/crawl_coupang_brand.py`는 `scripts/crawl_naver.py`의
+> `analyze_product`, `save_to_db`, `NON_LIBRE_CGM_EXCLUDE_PATTERNS`, `load_confirmed_qty_by_link_map`을
+> 그대로 import해 씁니다. 즉 **단가 계산·수량 추론·제외 키워드는 네이버와 쿠팡 공용**이며,
+> 한쪽에만 반영하면 채널 간 단가가 어긋납니다.
 
 ---
 
@@ -125,7 +132,7 @@ libre2-api/
 | `main.py` | 앱 진입점. `lifespan`에서 `init_db()` + `scheduler.start()` 실행, CORS 설정(localhost·`*.vercel.app` 허용), 라우터 등록. **`health`·`auth_dashboard`를 제외한 전 라우터에 JWT 의존성을 일괄 부착**한다. `POST /crawl/trigger`도 여기에 정의. |
 | `database.py` | SQLAlchemy 엔진·`SessionLocal` 생성. `init_db()`가 테이블 6개를 `CREATE TABLE IF NOT EXISTS`로 자동 생성하고, `_safe_alter()`로 컬럼/인덱스 추가를 **멱등하게** 처리(이미 있으면 무시). 기동 시 판매처명 일괄 정규화(`_normalize_mall_names`)와 월간 집계 판매처명 병합(`_merge_monthly_metrics_seller_rename`)도 수행. **마이그레이션 도구 없이 이 파일이 스키마 관리 역할**을 한다. |
 | `auth_dashboard.py` | 대시보드 공유 비밀번호 검증 + JWT(HS256, 유효기간 1일) 발급/검증. `require_dashboard_auth`가 전 라우터의 의존성. `DASHBOARD_AUTH_ENABLED=false`로 인증 우회 가능(로컬 전용). |
-| `scheduler.py` | 앱 내장 스케줄러. **기본 비활성(`ENABLE_SCHEDULER=false`)** — gunicorn 멀티 워커에서 중복 실행을 막기 위함. 활성 시 `CRAWL_TIMES_KST`(기본 03/06/09/15/18/21시) 크롤링과 `ALERT_SEND_TIME_KST`(기본 09:00) 알림 메일을 등록한다. KST→UTC 변환 후 등록하는 점 주의. |
+| `scheduler.py` | 앱 내장 스케줄러. **기본 비활성(`ENABLE_SCHEDULER=false`)** — gunicorn 멀티 워커에서 중복 실행을 막기 위함. 활성 시 `CRAWL_TIMES_KST`(기본 03/06/09/15/18/21시) 크롤링과 `ALERT_SEND_TIME_KST`(기본 09:00) 알림 메일을 등록한다. KST→UTC 변환 후 등록하는 점 주의. ⚠️ 켜면 **구버전 쿠팡 크롤러(`crawl_coupang_urls.py`)까지 함께 돌아 중복 수집**이 발생한다. |
 | `schemas.py` | Pydantic 요청/응답 모델 전체. |
 
 #### `api/routers/`
@@ -151,15 +158,15 @@ libre2-api/
 | `range_report_builder.py` | 기간 리포트 조립 + Markdown 렌더. |
 | `card_renderer.py` | Playwright로 HTML 카드를 PNG로 렌더(증빙 캡처). 카드에는 생성시각(KST)·단가·총가격·수량·판매처·링크가 들어간다. |
 | `s3_storage.py` | S3 업로드, object key 추출, presigned URL 생성. `ENABLE_S3_UPLOAD=false`면 전 기능 no-op. |
-| `coupang_remote.py` | paramiko SSH로 **사내 서버의 쿠팡 크롤러를 fire-and-forget 실행**. 대시보드 수동 크롤링 버튼용. 사내망 연결 필요. |
+| `coupang_remote.py` | paramiko SSH로 **회사 서버의 쿠팡 크롤러를 fire-and-forget 실행**. 대시보드 수동 크롤링 버튼용. 로그는 `coupang_manual.log`로 분리되며, `COUPANG_SSH_HOST`/`USER`/`PASSWORD`가 모두 설정되어 있지 않으면 에러 없이 `skipped`를 반환한다. |
 | `openai_reports.py` | OpenAI Responses API 호출로 리포트 요약문 생성. **`OPENAI_API_KEY`가 없으면 `None`을 반환하고 조용히 스킵** — 키 없이도 리포트는 정상 동작. |
 
 ### 4.2 `scripts/` — 크롤러 및 배치 CLI
 
 | 파일 | 상태 | 역할 |
 |------|------|------|
-| `crawl_naver.py` | ★**핵심·현행** | 네이버 쇼핑 오픈 API 크롤링. 리브레2 상품 판별(포함/제외 정규식), `analyze_product()`로 수량 파싱·**단가 산출**, `save_to_db()`로 스냅샷 저장, 증빙 카드 렌더 + S3 업로드 후처리. **`save_to_db`와 `analyze_product`는 쿠팡 크롤러도 import해 쓰는 공용 함수**이므로 수정 시 양쪽 영향 확인 필수. 판매처명 정규화 맵(`MALL_NAME_NORMALIZE_MAP`)도 여기 있다. |
-| `crawl_coupang_brand.py` | ★**현행** | 쿠팡 브랜드스토어 크롤러. Playwright + Bright Data(프록시 또는 원격 브라우저 WSS)로 `BRAND_STORES`에 정의된 **브랜드스토어 21곳**을 배치 순회. 스토어별 `min_price`·`name_filter` 지정 가능. 봇 차단(Access Denied)·navigation 에러 시 **스토어당 최대 3회 재시도**, 전멸 시 브라우저를 새 IP로 재연결 후 재시도. 프록시 크리덴셜은 `proxy.env`에서 로드. |
+| `crawl_naver.py` | ★**핵심·현행** | 네이버 쇼핑 오픈 API 크롤링. 리브레2 상품 판별(포함/제외 정규식), `analyze_product()`로 수량 파싱·**단가 산출**, `save_to_db()`로 스냅샷 저장, 증빙 카드 렌더 + S3 업로드 후처리. **여러 함수를 쿠팡 크롤러가 import해 쓰는 공용 모듈**이므로 수정 시 양쪽 영향 확인 필수. 판매처명 정규화 맵(`MALL_NAME_NORMALIZE_MAP`)도 여기 있다. |
+| `crawl_coupang_brand.py` | ★**현행** | 쿠팡 브랜드스토어 크롤러. Playwright + Bright Data(프록시 또는 Scraping Browser WSS)로 `BRAND_STORES`에 정의된 **브랜드스토어 21곳**을 배치 순회. 스토어별 `min_price`·`name_filter` 지정 가능. 봇 차단(Access Denied)·navigation 에러 시 **스토어당 최대 3회 재시도**, 전멸 시 브라우저를 새 IP로 재연결 후 재시도. 시작 시 `.env`와 `proxy.env`를 모두 로드. |
 | `crawl_coupang_urls.py` | 구버전(일부 사용) | URL 목록(`COUPANG_URLS_FILE`) 기반 쿠팡 크롤러. **내장 스케줄러(`api/scheduler.py`)가 아직 이 스크립트를 호출**하므로 완전 사용중지 상태는 아니다. |
 | `crawl_coupang.py` | 구버전(미사용) | 검색어 기반 쿠팡 크롤러. 현재 호출처 없음. |
 | `cleanup_non_libre_products.py` | 유지보수 | 리브레2가 아닌 상품이 섞여 들어온 경우 DB에서 정리. |
@@ -183,7 +190,7 @@ libre2-api/
 | `.env.example` | 환경변수 템플릿(키만, 값 없음). `cp .env.example .env` 후 채워 사용. |
 | `.gitlab-ci.yml` | gitleaks 시크릿 스캔 파이프라인. **실패 시 머지 차단.** |
 | `.gitleaks.toml` | 시크릿 스캔 예외 규칙. |
-| `.env`, `proxy.env` | 실제 시크릿. **`.gitignore`(`*.env`)로 커밋 차단됨.** `proxy.env`에는 Bright Data 크리덴셜이 들어간다. |
+| `.env`, `proxy.env` | 실제 시크릿. **`.gitignore`의 `*.env` 패턴으로 커밋 차단됨.** `proxy.env`에는 Bright Data 크리덴셜이 들어간다. |
 | `test_browser.py` | Playwright/프록시 연결이 되는지 확인하는 단발 점검 스크립트. |
 | `scheduler.log`, `scheduler_output.log` | 과거 내장 스케줄러 실행 로그(저장소에 커밋된 상태). 참고용이며 최신 운영 로그가 아님. |
 
@@ -192,7 +199,7 @@ libre2-api/
 | 파일 | 내용 |
 |------|------|
 | `README.md` | 본 문서. 구조·배포·운영 전반. |
-| `TECHNICAL_REPORT.md` | 기술 보고서. ⚠️ **일부 내용이 구버전**(단가 하한 50,000원 등 현재 로직과 불일치) — 코드를 우선 신뢰할 것. |
+| `TECHNICAL_REPORT.md` | 기술 보고서. |
 | `MEMO_FEATURE_USER_GUIDE.md` | 메모 기능 현업 사용 가이드. |
 | `RESULT_REPORT_MAIN_DASHBOARD_NAVER.md` | 네이버 대시보드 결과 보고서. |
 | `PROJECT_SCHEDULE.md` | 프로젝트 일정. |
@@ -233,6 +240,9 @@ libre2-api/
 
 > 컬럼 추가가 필요하면 `init_db()` 안에 `_safe_alter(conn, "ALTER TABLE ... ADD COLUMN ...")` 한 줄을 추가하면 됩니다.
 > 이미 존재하는 경우 예외를 삼키므로 재기동해도 안전합니다.
+
+> ⚠️ 테이블명은 `DB_TABLE` 환경변수로 덮어쓸 수 있지만 **크롤러 스크립트만 이 값을 사용하고 API는 `products`를
+> 하드코딩**합니다. 기본값에서 변경하지 마세요.
 
 ---
 
@@ -298,7 +308,6 @@ DB_PORT=3306
 DB_USER=root
 DB_PASSWORD=
 DB_NAME=daewoong
-ENABLE_DB_SAVE=true          # false면 크롤링해도 저장하지 않음
 
 # 네이버 오픈 API
 NAVER_CLIENT_ID=
@@ -309,15 +318,17 @@ DASHBOARD_PASSWORD=          # 미설정 시 기본값 사용 — 운영에서�
 JWT_SECRET=                  # 미설정 시 개발용 기본키로 동작하며 경고 발생 — 운영 필수
 ```
 
-### 기능 토글
+> ⚠️ **`ENABLE_DB_SAVE`는 무효한 변수입니다.** `config.py`에 정의만 되어 있고 이를 읽는 코드가 없으므로
+> 설정해도 아무 효과가 없습니다. DB 저장은 `MYSQL*`(또는 `DB_*`) 접속 정보만 있으면 동작합니다.
+
+### 기능 토글 (실제로 동작하는 것)
 
 | 변수 | 기본 | 설명 |
 |------|------|------|
-| `ENABLE_DB_SAVE` | false | 크롤링 결과 DB 저장 |
-| `ENABLE_CARD_RENDER` | false | 증빙 카드 PNG 렌더 |
+| `ENABLE_CARD_RENDER` | false | 증빙 카드 PNG 렌더. false면 `/products/card/generate`도 400 반환 |
 | `ENABLE_AUTO_CARD_RENDER` | true | false면 크롤링 중 자동 카드 생성만 건너뛰고 API 단건 생성은 허용 |
-| `ENABLE_S3_UPLOAD` | false | S3 업로드 |
-| `ENABLE_SCHEDULER` | false | 앱 내장 스케줄러 |
+| `ENABLE_S3_UPLOAD` | false | S3 업로드. false면 `s3_storage` 전 기능 no-op |
+| `ENABLE_SCHEDULER` | false | 앱 내장 스케줄러. ⚠️ 켜면 구버전 쿠팡 크롤러까지 돌아 중복 수집 주의 |
 | `DASHBOARD_AUTH_ENABLED` | true | false면 인증 우회(로컬 전용) |
 
 ### 그 외 주요 그룹
@@ -367,13 +378,111 @@ python -m scripts.crawl_coupang_brand   # Bright Data 크리덴셜(proxy.env) �
 
 ---
 
-## 10. 운영 가이드 · 트러블슈팅
+## 10. Railway 배포 (web · 네이버 크롤러)
+
+Railway에는 **3개 서비스**가 있습니다. 쿠팡 크롤러는 여기 없습니다([11장](#11-쿠팡-크롤러-운영-회사-서버) 참고).
+
+- **`web`**: FastAPI 서버 (24/7 실행)
+- **`Cron Job (네이버)`**: 하루 6회 네이버 자동 크롤링
+- **`MySQL`**: 데이터베이스 서비스
+
+### 10.1 MySQL 서비스
+
+Railway 프로젝트 → **+ New** → **Database** → **MySQL**. 생성되면 `MYSQL*` 변수가 자동 제공됩니다.
+
+### 10.2 Web 서비스
+
+1. GitHub 저장소 연결 → Railway가 `Procfile`의 `web` 명령으로 자동 배포
+2. **Variables** 탭에서 환경 변수 설정 ([8장](#8-환경-변수) 참고)
+
+### 10.3 네이버 Cron Job 서비스
+
+1. **+ New** → **Cron Job**
+2. **Schedule**: `0 0,6,9,12,18,21 * * *`
+   - ⚠️ Railway Cron은 **UTC 기준**입니다. 위 식은 KST 03:00 / 06:00 / 09:00 / 15:00 / 18:00 / 21:00에 해당합니다 (KST = UTC + 9).
+3. **Command**: `python -m scripts.crawl_naver`
+4. **Variables**:
+   - `MYSQLHOST = ${{ MySQL.MYSQLHOST }}`
+   - `MYSQLUSER = ${{ MySQL.MYSQLUSER }}`
+   - `MYSQLPASSWORD = ${{ MySQL.MYSQLPASSWORD }}`
+   - `MYSQLDATABASE = ${{ MySQL.MYSQLDATABASE }}`
+   - `MYSQLPORT = ${{ MySQL.MYSQLPORT }}`
+   - `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`, `SEARCH_KEYWORD`
+
+> **참고**: Variables에서 MySQL 서비스를 참조하는 변수를 추가하면 Architecture 탭에 자동으로 연결선이 생깁니다.
+> Railway Cron Job은 스케줄 시각에 컨테이너를 시작하고 작업 완료 후 종료합니다.
+
+---
+
+## 11. 쿠팡 크롤러 운영 (회사 서버)
+
+쿠팡은 Cloudflare/Akamai 계열 anti-bot 때문에 Bright Data Scraping Browser(원격 Chrome + 한국 주거용 프록시)를
+경유해야 해서, Railway가 아닌 **회사 서버 crontab**에서 실행합니다. 수집 결과는 네이버와 동일한 Railway MySQL에 저장됩니다.
+
+서버의 클론은 사내 GitLab을 바라보므로, 코드 수정 시 GitHub와 GitLab **양쪽에 반영**해야 합니다
+(절차는 [3장](#3-저장소--배포-토폴로지) 참고).
+
+### 11.1 환경 구성
+
+```bash
+cd /home/develop/daewoong/libre2-monitor/libre2-api
+python3 -m venv .venv
+. .venv/bin/activate   # 서버 기본 셸이 sh이므로 source 대신 . 사용
+pip install -r requirements.txt
+playwright install chromium
+```
+
+### 11.2 환경변수 파일 (git 제외 — `.gitignore`의 `*.env` 패턴)
+
+- `.env`: `MYSQLHOST` / `MYSQLPORT` / `MYSQLUSER` / `MYSQLPASSWORD` / `MYSQLDATABASE`, `SEARCH_KEYWORD`
+- `proxy.env`: `BRIGHT_DATA_PROXY` / `BRIGHT_DATA_USERNAME` / `BRIGHT_DATA_PASSWORD` / `BRIGHT_DATA_BROWSER_WSS`
+
+`crawl_coupang_brand.py`는 시작 시 `.env`와 `proxy.env`를 모두 로드합니다.
+(AWS·S3 키는 쿠팡 크롤러에서 사용하지 않으므로 서버에 둘 필요가 없습니다.)
+
+### 11.3 실행 및 스케줄
+
+```bash
+python -m scripts.crawl_coupang_brand
+```
+
+crontab (하루 6회, 서버 시간대 KST 기준):
+
+```
+0 3,6,9,15,18,21 * * * cd /home/develop/daewoong/libre2-monitor/libre2-api && .venv/bin/python -m scripts.crawl_coupang_brand >> coupang_cron.log 2>&1
+```
+
+로그 확인: `tail -f coupang_cron.log` (성공 시 `DB inserted: N개` 출력)
+
+### 11.4 대시보드 수동 크롤링 버튼
+
+`POST /products/crawl/run`으로 들어와, 쿠팡의 경우 `api/services/coupang_remote.py`가 `COUPANG_SSH_*`
+환경변수로 이 서버에 SSH 접속해 같은 명령을 백그라운드 실행합니다(로그는 `coupang_manual.log`로 분리).
+`COUPANG_SSH_HOST` / `USER` / `PASSWORD`가 모두 설정되어 있지 않으면 에러 없이 `skipped`로 넘어갑니다.
+사내망 전용이므로 호출자가 회사 와이파이/VPN에 연결되어 있어야 합니다.
+
+### 11.5 크롤링 대상 브랜드 스토어
+
+`scripts/crawl_coupang_brand.py`의 `BRAND_STORES` 리스트(현재 **21곳**)에 스토어별 URL, 최소가 필터(`min_price`),
+상품명 필터(`name_filter`)가 정의되어 있습니다. 신규 브랜드는 이 리스트에 항목만 추가하면 됩니다.
+
+### 11.6 트러블슈팅
+
+| 증상 | 확인 사항 |
+| --- | --- |
+| Access Denied | `proxy.env` 크리덴셜, Bright Data Zone 활성 상태 및 잔여 크레딧 |
+| WSS 연결 실패 | 내장 재시도(3회) 대기, Scraping Browser Zone 활성 여부, `brd.superproxy.io:9222` 아웃바운드 허용 |
+| DB 저장 안 됨 (inserted: 0) | `.env`의 `MYSQL*` 5개 값, Railway MySQL 서비스 running 상태 |
+
+---
+
+## 12. 운영 가이드 · 트러블슈팅
 
 ### 데이터가 안 보일 때
 
 1. `GET /health/db` 호출 — `products_rows=0`이면 크롤 데이터가 없거나 다른 DB를 보고 있는 것.
 2. `rows_with_snapshot_id=0`이면 `/latest`가 빈 값을 반환합니다(최신 스냅샷 기준이므로).
-3. 크롤러 쪽 `ENABLE_DB_SAVE=true` 여부 확인.
+3. DB 접속 정보(`MYSQL*` 또는 `DB_*`)가 올바른지 확인.
 
 ### 쿠팡 데이터가 들쭉날쭉할 때 (알려진 이슈)
 
@@ -384,7 +493,7 @@ python -m scripts.crawl_coupang_brand   # Bright Data 크리덴셜(proxy.env) �
 현재 완화 조치: 스토어당 최대 3회 재시도, 추출 직전 `networkidle` 대기, goto 타임아웃 40초, 전멸 시 새 IP로 브라우저 재연결.
 **완전 해결은 아니므로 한 스냅샷만 보고 판단하지 말고 여러 스냅샷을 함께 확인**하세요.
 
-### 사내 서버 cron이 조용히 멈췄을 때 (재발 이슈)
+### 회사 서버 cron이 조용히 멈췄을 때 (재발 이슈)
 
 계정 **비밀번호 aging 만료**가 원인인 경우가 있었습니다.
 증상은 "코드 변경 없이 어느 날 갑자기 크롤링이 멈추고, cron 로그조차 남지 않음"이며,
@@ -404,16 +513,16 @@ SSH는 인증까지 되지만 모든 명령이 `WARNING: Your password has expir
 ### 배포 시 주의
 
 - `Procfile`의 `--workers 1`을 늘리지 마세요. 내장 스케줄러와 크롤 실행 락이 프로세스 내 전역 상태를 사용합니다.
-- 사내 서버 반영은 [3. 저장소·배포 토폴로지](#3-저장소--배포-토폴로지)의 cherry-pick 절차를 따르세요.
+- 회사 서버 반영은 [3장](#3-저장소--배포-토폴로지)의 cherry-pick 절차를 따르세요.
 - Railway에서 카드 렌더를 쓰려면 `nixpacks.toml`이 적용되어야 합니다(Chromium 시스템 라이브러리 + 한글 폰트).
 
 ---
 
-## 11. 인수인계 체크리스트
+## 13. 인수인계 체크리스트
 
 - [ ] GitHub `pasohyun/libre2-api` 접근 권한 (**실질 소스**)
-- [ ] 사내 GitLab 프로젝트 접근 권한 (시크릿 스캔 CI)
-- [ ] 사내 서버 SSH 계정 — 쿠팡 크롤러 cron이 도는 곳. 비밀번호 만료 정책 확인(`chage -l`)
+- [ ] 사내 GitLab 프로젝트 접근 권한 (시크릿 스캔 CI + 서버 클론이 바라보는 곳)
+- [ ] 회사 서버 SSH 계정 — 쿠팡 크롤러 cron이 도는 곳. 비밀번호 만료 정책 확인(`chage -l`)
 - [ ] Railway 프로젝트(web · Cron Job · MySQL) 권한
 - [ ] Vercel 프로젝트 권한 (프론트엔드)
 - [ ] 시크릿 인수: 네이버 오픈 API 키, Bright Data 크리덴셜, AWS S3 키, SMTP 계정, `DASHBOARD_PASSWORD`, `JWT_SECRET`, (선택) OpenAI 키
