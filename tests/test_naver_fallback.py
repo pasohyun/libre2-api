@@ -158,3 +158,31 @@ def test_run_crawling_raises_on_failure_without_saving(monkeypatch):
     with pytest.raises(m.NaverCrawlFailed, match="수집 불완전"):
         m.run_crawling()
     assert saved == []
+
+
+def test_proxy_auth_error_skips_retries(monkeypatch):
+    calls = []
+
+    def fake_get(*a, **k):
+        calls.append(1)
+        raise m.requests.exceptions.ProxyError(
+            "Unable to connect to proxy: Tunnel connection failed: 407 Invalid Auth"
+        )
+    monkeypatch.setattr(m.requests, "get", fake_get)
+    cfg = {"server": "http://h:1", "username": "u", "password": "p"}
+    with pytest.raises(m.BlockedError, match="407"):
+        m._fetch_page_via_proxy("kw", 1, proxy_cfg=cfg)
+    assert len(calls) == 1  # 재시도 없이 즉시 포기
+
+
+def test_other_proxy_error_still_retries(monkeypatch):
+    calls = []
+
+    def fake_get(*a, **k):
+        calls.append(1)
+        raise m.requests.exceptions.ProxyError("Tunnel connection failed: 502 Bad Gateway")
+    monkeypatch.setattr(m.requests, "get", fake_get)
+    cfg = {"server": "http://h:1", "username": "u", "password": "p"}
+    with pytest.raises(m.BlockedError):
+        m._fetch_page_via_proxy("kw", 1, proxy_cfg=cfg)
+    assert len(calls) == m.MAX_RETRIES

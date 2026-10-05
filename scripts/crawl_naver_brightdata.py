@@ -184,6 +184,14 @@ def detect_block(resp) -> str:
     return ""
 
 
+def _is_proxy_auth_error(exc: Exception) -> bool:
+    """Bright Data 크리덴셜 오류(407) 여부. 일시적 오류가 아니라 재시도 의미가 없다."""
+    if not isinstance(exc, requests.exceptions.ProxyError):
+        return False
+    msg = str(exc)
+    return "407" in msg or "Invalid Auth" in msg or "Proxy Authentication Required" in msg
+
+
 def _fetch_page_via_proxy(
     keyword: str,
     cursor: int,
@@ -217,6 +225,10 @@ def _fetch_page_via_proxy(
             )
         except Exception as e:
             last_reason = f"{type(e).__name__}: {e}"
+            # 프록시 인증 실패(407)는 재시도해도 결과가 같으므로 바로 다음 백엔드로 넘긴다.
+            if _is_proxy_auth_error(e):
+                _log(f"    [SKIP] 프록시 인증 실패(407) — 재시도 없이 다음 백엔드로: {last_reason[:120]}")
+                raise BlockedError(f"cursor={cursor} 프록시 인증 실패(407)") from e
             _log(f"    [RETRY {attempt}/{MAX_RETRIES}] 요청 실패: {last_reason}")
             if attempt < MAX_RETRIES:
                 time.sleep(attempt * 2)
