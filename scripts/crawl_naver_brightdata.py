@@ -28,9 +28,11 @@
     python -m scripts.crawl_naver_brightdata --no-proxy # 프록시 없이 (한국 IP에서 점검용)
 
 인수인계 메모:
-    fallback / 차단 대응은 아래 두 seam 에 붙이면 된다.
-      1) detect_block()   — 차단 판정 기준
-      2) FETCH_BACKENDS   — 수집 백엔드 목록(현재 Bright Data 주거용 1개)
+    fallback / 차단 대응
+      1) detect_block()           — 차단 판정 기준
+      2) build_fetch_backends()   — 수집 백엔드 목록 (residential → unlocker → direct)
+      3) fetch_all_products()     — 페이지 단위 fallback, 전부 실패 시 NaverCrawlFailed
+      4) check_completeness()     — total 대비 수집률 미달 시 저장 생략(기존 데이터 보존)
     자세한 내용은 각 함수의 docstring 참고.
 """
 import argparse
@@ -123,17 +125,23 @@ def _tls_verify_option():
     return VERIFY_TLS
 
 
-def _build_proxies(session_id: str):
-    """Bright Data 주거용 프록시 주소를 만든다.
+def _build_proxies(session_id: str | None, *, server=None, username=None, password=None):
+    """Bright Data 프록시 주소를 만든다.
 
     username 에 `-session-<id>` 를 붙이면 해당 세션 동안 같은 출구 IP를 유지한다.
     차단 시 session_id 를 새로 뽑으면 다른 IP로 갈아탄다.
+    session_id=None 이면 세션 고정을 쓰지 않는다 (Web Unlocker 존 등).
+    server/username/password 를 생략하면 기본(BRIGHT_DATA_*) 크리덴셜을 쓴다.
     """
-    if not all((PROXY_SERVER, PROXY_USERNAME, PROXY_PASSWORD)):
+    server = server or PROXY_SERVER
+    username = username or PROXY_USERNAME
+    password = password or PROXY_PASSWORD
+    if not all((server, username, password)):
         return None
-    username = f"{PROXY_USERNAME}-session-{session_id}"
-    creds = f"{urllib.parse.quote(username)}:{urllib.parse.quote(PROXY_PASSWORD)}"
-    host = PROXY_SERVER.split("://", 1)[-1]
+    if session_id:
+        username = f"{username}-session-{session_id}"
+    creds = f"{urllib.parse.quote(username)}:{urllib.parse.quote(password)}"
+    host = server.split("://", 1)[-1]
     url = f"http://{creds}@{host}"
     return {"http": url, "https": url}
 
@@ -176,9 +184,16 @@ def detect_block(resp) -> str:
     return ""
 
 
-def _fetch_page_via_brightdata(keyword: str, cursor: int, *, use_proxy: bool):
+def _fetch_page_via_proxy(
+    keyword: str,
+    cursor: int,
+    *,
+    proxy_cfg: dict | None,
+    sticky_session: bool = True,
+):
     """한 페이지를 가져온다. 차단이면 세션(IP)을 바꿔 재시도한다.
 
+    proxy_cfg: {"server", "username", "password"} 또는 None(직접 호출)
     반환: (items, next_cursor, has_more, total)
     """
     enc = urllib.parse.quote(keyword)
@@ -186,13 +201,10 @@ def _fetch_page_via_brightdata(keyword: str, cursor: int, *, use_proxy: bool):
     last_reason = ""
 
     for attempt in range(1, MAX_RETRIES + 1):
-        session_id = uuid.uuid4().hex[:10]
-        proxies = _build_proxies(session_id) if use_proxy else None
-        if use_proxy and proxies is None:
-            raise RuntimeError(
-                "Bright Data 크리덴셜이 없습니다. proxy.env 의 "
-                "BRIGHT_DATA_PROXY / USERNAME / PASSWORD 를 확인하세요."
-            )
+        proxies = None
+        if proxy_cfg is not None:
+            session_id = uuid.uuid4().hex[:10] if sticky_session else None
+            proxies = _build_proxies(session_id, **proxy_cfg)
 
         t0 = time.time()
         try:
@@ -201,7 +213,7 @@ def _fetch_page_via_brightdata(keyword: str, cursor: int, *, use_proxy: bool):
                 headers=_headers(keyword),
                 proxies=proxies,
                 timeout=REQUEST_TIMEOUT,
-                verify=_tls_verify_option(),
+                verify=_tls_verify_option() if proxies else True,
             )
         except Exception as e:
             last_reason = f"{type(e).__name__}: {e}"
@@ -229,6 +241,15 @@ def _fetch_page_via_brightdata(keyword: str, cursor: int, *, use_proxy: bool):
             continue
 
         items = data.get("data") or []
+        # 첫 페이지가 정상 JSON 인데 0건이면 '소프트 차단'으로 본다.
+        # (리브레2 검색 결과는 항상 수백 건이라 0건은 정상 상황이 아님)
+        if cursor == 1 and not items:
+            last_reason = f"첫 페이지 0건(total={data.get('total')}) — 소프트 차단 의심"
+            _log(f"    [RETRY {attempt}/{MAX_RETRIES}] {last_reason}")
+            if attempt < MAX_RETRIES:
+                time.sleep(attempt * 2)
+            continue
+
         _log(
             f"  page cursor={cursor} items={len(items)} "
             f"total={data.get('total')} {elapsed:.1f}s"
@@ -238,30 +259,124 @@ def _fetch_page_via_brightdata(keyword: str, cursor: int, *, use_proxy: bool):
     raise BlockedError(f"cursor={cursor} {MAX_RETRIES}회 재시도 실패: {last_reason}")
 
 
+# ------------------------------------------------------------ fallback 백엔드
+class NaverCrawlFailed(RuntimeError):
+    """모든 백엔드가 실패했거나 수집 결과가 불완전해 저장하면 안 되는 경우."""
+
+
+def _env_proxy_cfg(prefix: str, *, default_server: str | None = None):
+    """{prefix}_PROXY / _USERNAME / _PASSWORD 로 프록시 설정을 만든다. 없으면 None."""
+    server = os.getenv(f"{prefix}_PROXY") or default_server
+    username = os.getenv(f"{prefix}_USERNAME")
+    password = os.getenv(f"{prefix}_PASSWORD")
+    if not all((server, username, password)):
+        return None
+    return {"server": server, "username": username, "password": password}
+
+
+def _make_proxy_backend(proxy_cfg, *, sticky_session: bool):
+    def fetch_page(keyword, cursor):
+        return _fetch_page_via_proxy(
+            keyword, cursor, proxy_cfg=proxy_cfg, sticky_session=sticky_session
+        )
+    return fetch_page
+
+
+def _fetch_page_direct(keyword, cursor):
+    return _fetch_page_via_proxy(keyword, cursor, proxy_cfg=None)
+
+
 # [인수인계 seam] 수집 백엔드 목록.
-# 지금은 Bright Data 주거용 단일 경로다. 팀원이 fallback(예: Web Unlocker,
-# 다른 존, 사내 직접 호출)을 추가할 때 여기에 (이름, 호출함수) 를 덧붙이고
-# fetch_all_products() 의 루프가 순서대로 시도하게 하면 된다.
-FETCH_BACKENDS = [
-    ("brightdata-residential-kr", _fetch_page_via_brightdata),
-]
+# NAVER_FETCH_BACKENDS 순서대로 시도하고, 설정(크리덴셜)이 없는 백엔드는 건너뛴다.
+#   residential : Bright Data 주거용 KR (기본, proxy.env 의 BRIGHT_DATA_*)
+#   unlocker    : Bright Data 다른 존(Web Unlocker 등) — BRIGHT_DATA_FALLBACK_*
+#   direct      : 프록시 없이 직접 호출. 서버가 한국 IP일 때만 의미가 있어
+#                 NAVER_ALLOW_DIRECT=true 일 때만 켠다 (Railway 는 해외 IP라 기본 OFF).
+DEFAULT_BACKEND_ORDER = "residential,unlocker,direct"
 
 
-def fetch_all_products(keyword: str, *, use_proxy: bool = True):
-    """커서 페이지네이션으로 검색 결과를 전량 수집한다."""
-    backend_name, fetch_page = FETCH_BACKENDS[0]
-    _log(f"[NAVER] 수집 백엔드: {backend_name} (proxy={'ON' if use_proxy else 'OFF'})")
+def build_fetch_backends(*, use_proxy: bool = True):
+    """설정된 백엔드만 (이름, fetch_page(keyword, cursor)) 리스트로 반환한다."""
+    if not use_proxy:
+        return [("direct", _fetch_page_direct)]
 
+    order = [
+        b.strip().lower()
+        for b in os.getenv("NAVER_FETCH_BACKENDS", DEFAULT_BACKEND_ORDER).split(",")
+        if b.strip()
+    ]
+    allow_direct = os.getenv("NAVER_ALLOW_DIRECT", "false").lower() == "true"
+
+    backends = []
+    for name in order:
+        if name == "residential":
+            cfg = _env_proxy_cfg("BRIGHT_DATA")
+            if cfg:
+                backends.append(
+                    ("brightdata-residential-kr", _make_proxy_backend(cfg, sticky_session=True))
+                )
+            else:
+                _log("[NAVER] residential 백엔드 건너뜀: BRIGHT_DATA_* 크리덴셜 없음")
+        elif name == "unlocker":
+            cfg = _env_proxy_cfg("BRIGHT_DATA_FALLBACK", default_server=PROXY_SERVER)
+            if cfg:
+                # Web Unlocker 존은 자체적으로 IP를 돌리므로 session 고정을 쓰지 않는다.
+                sticky = os.getenv("BRIGHT_DATA_FALLBACK_STICKY", "false").lower() == "true"
+                backends.append(
+                    ("brightdata-fallback-zone", _make_proxy_backend(cfg, sticky_session=sticky))
+                )
+        elif name == "direct":
+            if allow_direct:
+                backends.append(("direct", _fetch_page_direct))
+        else:
+            _log(f"[WARN] 알 수 없는 백엔드 이름 무시: {name!r}")
+
+    if not backends:
+        raise NaverCrawlFailed(
+            "사용 가능한 수집 백엔드가 없습니다. proxy.env 의 BRIGHT_DATA_* 크리덴셜을 확인하세요."
+        )
+    return backends
+
+
+def fetch_all_products(keyword: str, *, use_proxy: bool = True, backends=None):
+    """커서 페이지네이션으로 검색 결과를 전량 수집한다.
+
+    fallback 규칙
+      - 페이지 단위로 시도한다. 현재 백엔드가 재시도까지 모두 실패(BlockedError)하면
+        다음 백엔드로 넘어가 '같은 cursor'부터 이어서 수집한다.
+      - 한 번 넘어간 뒤에는 이전 백엔드로 돌아가지 않는다 (차단된 경로 재시도 방지).
+      - 모든 백엔드가 실패하면 NaverCrawlFailed — 부분 수집분은 저장하지 않는다.
+
+    반환: (items, meta)  meta = {"total", "pages", "backends_used"}
+    """
+    backends = backends if backends is not None else build_fetch_backends(use_proxy=use_proxy)
+    _log("[NAVER] 수집 백엔드 순서: " + " → ".join(n for n, _ in backends))
+
+    idx = 0
     items = []
     cursor = 1
     pages = 0
     total = None
+    used = []  # 페이지별 사용 백엔드 (로그/점검용)
+    failures = []
 
     while pages < MAX_PAGES:
-        batch, next_cursor, has_more, total = fetch_page(
-            keyword, cursor, use_proxy=use_proxy
-        )
+        name, fetch_page = backends[idx]
+        try:
+            batch, next_cursor, has_more, total = fetch_page(keyword, cursor)
+        except BlockedError as e:
+            failures.append(f"{name}: {e}")
+            _log(f"[NAVER] 백엔드 실패 {name}: {e}")
+            idx += 1
+            if idx >= len(backends):
+                raise NaverCrawlFailed(
+                    f"모든 백엔드 실패 (수집 {len(items)}건에서 중단): " + " | ".join(failures)
+                ) from e
+            _log(f"[NAVER] fallback → {backends[idx][0]} (cursor={cursor}부터 이어서)")
+            continue
+
         items.extend(batch)
+        used.append(name)
         pages += 1
 
         if not has_more or not batch:
@@ -274,8 +389,28 @@ def fetch_all_products(keyword: str, *, use_proxy: bool = True):
     if pages >= MAX_PAGES:
         _log(f"[WARN] MAX_PAGES({MAX_PAGES}) 도달 — 수집이 잘렸을 수 있음")
 
-    _log(f"[NAVER] 수집 완료: {len(items)}건 (total={total}, pages={pages})")
-    return items
+    backends_used = sorted(set(used), key=used.index)
+    _log(
+        f"[NAVER] 수집 완료: {len(items)}건 (total={total}, pages={pages}, "
+        f"backends={','.join(backends_used)})"
+    )
+    return items, {"total": total, "pages": pages, "backends_used": backends_used}
+
+
+def check_completeness(items, total) -> None:
+    """수집 건수가 네이버가 알려준 total 대비 너무 적으면 저장을 막는다.
+
+    부분 수집분으로 스냅샷을 만들면 대시보드에서 판매처/상품이 '사라진' 것처럼 보이므로,
+    이 경우 기존 DB 데이터를 그대로 두는 편이 안전하다.
+    """
+    min_ratio = float(os.getenv("NAVER_MIN_COMPLETENESS", "0.9"))
+    if not total:
+        return
+    ratio = len(items) / total
+    if ratio < min_ratio:
+        raise NaverCrawlFailed(
+            f"수집 불완전: {len(items)}/{total}건 ({ratio:.0%} < {min_ratio:.0%}) — 저장 생략"
+        )
 
 
 def _passes_category(item) -> bool:
@@ -388,10 +523,11 @@ def run_crawling(*, use_proxy: bool = True, dry_run: bool = False):
     if confirmed_map:
         _log(f"수동확정 수량 재사용 맵: {len(confirmed_map)}개 링크")
 
-    items = fetch_all_products(keyword, use_proxy=use_proxy)
+    # 실패 시 예외를 올려 /crawl/status 의 last_error 에 남게 한다. (기존 DB 데이터는 보존)
+    items, meta = fetch_all_products(keyword, use_proxy=use_proxy)
     if not items:
-        _log("[ERROR] 수집 0건 — 차단 가능성. DB 저장을 건너뜁니다.")
-        return
+        raise NaverCrawlFailed("수집 0건 — 차단 가능성. DB 저장을 건너뜁니다.")
+    check_completeness(items, meta["total"])
 
     rows = build_rows(items, keyword, confirmed_qty_by_link=confirmed_map)
     _log(f"Fetched: {len(rows)} rows")
@@ -411,8 +547,9 @@ def run_crawling(*, use_proxy: bool = True, dry_run: bool = False):
         return
 
     if not rows:
-        _log("[ERROR] 저장할 상품이 없습니다.")
-        return
+        raise NaverCrawlFailed(
+            f"필터 통과 0건 (수집 {len(items)}건) — 응답 구조/카테고리 ID 변경 여부 확인 필요"
+        )
 
     snapshot_at = crawl_started_at
     snapshot_id = f"{snapshot_at.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
@@ -447,7 +584,11 @@ def main():
     ap.add_argument("--no-proxy", action="store_true",
                     help="Bright Data 없이 직접 호출 (한국 IP 점검용)")
     args = ap.parse_args()
-    run_crawling(use_proxy=not args.no_proxy, dry_run=args.dry_run)
+    try:
+        run_crawling(use_proxy=not args.no_proxy, dry_run=args.dry_run)
+    except NaverCrawlFailed as e:
+        _log(f"[ERROR] {e}")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
