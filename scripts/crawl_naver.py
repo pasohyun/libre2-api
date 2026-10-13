@@ -1057,6 +1057,19 @@ def update_card_image_paths(rows, *, snapshot_id: str):
 
 
 def run_crawling():
+    """네이버 검색 API 제공 중단으로 Bright Data 크롤러에 위임한다.
+
+    `python -m scripts.crawl_naver` 로 등록된 Cron 이 남아 있어도 새 경로로 동작하게 하기 위함.
+    이 모듈의 필터·수량분석·DB 저장 함수는 crawl_naver_brightdata / 쿠팡 크롤러가 공용으로 쓴다.
+    """
+    from scripts.crawl_naver_brightdata import run_crawling as run_brightdata_crawling
+
+    _log("[DEPRECATED] 네이버 검색 API 중단 — scripts.crawl_naver_brightdata 로 위임합니다.")
+    run_brightdata_crawling()
+
+
+def _run_crawling_legacy_api():
+    """(미사용) 구 네이버 검색 API 경로. API 중단으로 동작하지 않으며 참고용으로만 남긴다."""
     crawl_started_at = datetime.now(KST).replace(microsecond=0)
     _log(f"START: {crawl_started_at.isoformat(timespec='seconds')}")
     keyword = config.SEARCH_KEYWORD

@@ -31,7 +31,8 @@
 
 ```
                                   ┌────────────────────────┐
-   네이버 쇼핑 오픈API  ──────────▶│  scripts/crawl_naver   │
+   네이버 쇼핑 검색(JSON)  ───────▶│ crawl_naver_brightdata │
+   Bright Data 주거용 KR          │ (+ crawl_naver 공용)    │
    (Railway Cron)                 └───────────┬────────────┘
                                               │  analyze_product() → 단가 산출
                                               │  save_to_db()      → 스냅샷 저장
@@ -98,7 +99,7 @@
 | 실행 대상 | 위치 | 방식 |
 |-----------|------|------|
 | API 서버 (`web`) | Railway | `Procfile` → `gunicorn api.main:app -k UvicornWorker --workers 1` |
-| 네이버 크롤러 | Railway Cron Job | `python -m scripts.crawl_naver` (하루 6회) |
+| 네이버 크롤러 | Railway Cron Job | `python -m scripts.crawl_naver_brightdata` (하루 6회) |
 | **쿠팡 브랜드 크롤러** | **회사 서버 crontab** | `0 3,6,9,15,18,21` KST → `.venv/bin/python -m scripts.crawl_coupang_brand` |
 | DB (MySQL) | Railway MySQL | 네이버·쿠팡 공용 |
 | 프론트엔드 | Vercel | 별도 저장소 |
@@ -165,7 +166,8 @@ libre2-api/
 
 | 파일 | 상태 | 역할 |
 |------|------|------|
-| `crawl_naver.py` | ★**핵심·현행** | 네이버 쇼핑 오픈 API 크롤링. 리브레2 상품 판별(포함/제외 정규식), `analyze_product()`로 수량 파싱·**단가 산출**, `save_to_db()`로 스냅샷 저장, 증빙 카드 렌더 + S3 업로드 후처리. **여러 함수를 쿠팡 크롤러가 import해 쓰는 공용 모듈**이므로 수정 시 양쪽 영향 확인 필수. 판매처명 정규화 맵(`MALL_NAME_NORMALIZE_MAP`)도 여기 있다. |
+| `crawl_naver_brightdata.py` | ★**핵심·현행** | 네이버 크롤러. 네이버 검색 API 제공 중단으로 쇼핑 검색 JSON(`ns/v1/search/paged-products`)을 **Bright Data 한국 주거용 프록시**로 직접 수집한다. 수집 경로 fallback(`residential → unlocker → direct`, `NAVER_FETCH_BACKENDS`), 차단 감지(`detect_block()`), 수집률 가드(`NAVER_MIN_COMPLETENESS`, 미달 시 저장 생략) 포함. 필터·수량분석·DB 저장은 `crawl_naver.py` 함수를 그대로 쓴다. `--dry-run`으로 DB 저장 없이 점검 가능. |
+| `crawl_naver.py` | ★**공용 모듈** | (구 네이버 오픈 API 크롤러 — API 중단으로 수집 경로는 미사용, `run_crawling()`은 `crawl_naver_brightdata`로 위임) 리브레2 상품 판별(포함/제외 정규식), `analyze_product()`로 수량 파싱·**단가 산출**, `save_to_db()`로 스냅샷 저장, 증빙 카드 렌더 + S3 업로드 후처리. **여러 함수를 쿠팡 크롤러가 import해 쓰는 공용 모듈**이므로 수정 시 양쪽 영향 확인 필수. 판매처명 정규화 맵(`MALL_NAME_NORMALIZE_MAP`)도 여기 있다. |
 | `crawl_coupang_brand.py` | ★**현행** | 쿠팡 브랜드스토어 크롤러. Playwright + Bright Data(프록시 또는 Scraping Browser WSS)로 `BRAND_STORES`에 정의된 **브랜드스토어 21곳**을 배치 순회. 스토어별 `min_price`·`name_filter` 지정 가능. 봇 차단(Access Denied)·navigation 에러 시 **스토어당 최대 3회 재시도**, 전멸 시 브라우저를 새 IP로 재연결 후 재시도. 시작 시 `.env`와 `proxy.env`를 모두 로드. |
 | `crawl_coupang_urls.py` | 구버전(일부 사용) | URL 목록(`COUPANG_URLS_FILE`) 기반 쿠팡 크롤러. **내장 스케줄러(`api/scheduler.py`)가 아직 이 스크립트를 호출**하므로 완전 사용중지 상태는 아니다. |
 | `crawl_coupang.py` | 구버전(미사용) | 검색어 기반 쿠팡 크롤러. 현재 호출처 없음. |
@@ -309,10 +311,6 @@ DB_USER=root
 DB_PASSWORD=
 DB_NAME=daewoong
 
-# 네이버 오픈 API
-NAVER_CLIENT_ID=
-NAVER_CLIENT_SECRET=
-
 # 대시보드 인증
 DASHBOARD_PASSWORD=          # 미설정 시 기본값 사용 — 운영에서는 반드시 설정
 JWT_SECRET=                  # 미설정 시 개발용 기본키로 동작하며 경고 발생 — 운영 필수
@@ -339,7 +337,8 @@ JWT_SECRET=                  # 미설정 시 개발용 기본키로 동작하며
 | S3 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `S3_BUCKET`, `S3_PREFIX`, `S3_PUBLIC_BASE_URL`, `S3_ENDPOINT_URL`, `S3_UPLOAD_MAX_PER_RUN`(0 이하면 전량) |
 | 알림 메일 | `ALERT_SMTP_HOST/PORT/USER/PASSWORD/USE_TLS`, `ALERT_SEND_TIME_KST`, `ALERT_DASHBOARD_URL`, `ALERT_REPORT_FONT_PATH` |
 | 스케줄 | `CRAWL_TIMES_KST`(기본 `03:00,06:00,09:00,15:00,18:00,21:00`) |
-| 쿠팡 프록시 | `BRIGHT_DATA_PROXY`, `BRIGHT_DATA_USERNAME`, `BRIGHT_DATA_PASSWORD`, `BRIGHT_DATA_BROWSER_WSS` (→ `proxy.env`) |
+| Bright Data (네이버·쿠팡 공용) | `BRIGHT_DATA_PROXY`, `BRIGHT_DATA_USERNAME`(주거용 존, `-country-kr` 필수), `BRIGHT_DATA_PASSWORD` — 로컬은 `proxy.env`, Railway는 web·네이버 Cron 서비스 Variables. 쿠팡은 `BRIGHT_DATA_BROWSER_WSS`도 사용 |
+| 네이버 fallback(선택) | `NAVER_FETCH_BACKENDS`(기본 `residential,unlocker,direct`), `BRIGHT_DATA_FALLBACK_PROXY/USERNAME/PASSWORD`, `NAVER_ALLOW_DIRECT`(한국 IP 서버에서만 true), `NAVER_MIN_COMPLETENESS`(기본 0.9) |
 | 쿠팡 SSH 트리거 | `COUPANG_SSH_HOST/PORT/USER/PASSWORD/WORKDIR/PYTHON/MODULE` |
 | 분석 튜닝 | `PRICE_ANALYTICS_*` (베이스라인 일수, modified z 임계값, ETS/OLS 구간 등) |
 | OpenAI(선택) | `OPENAI_API_KEY`, `OPENAI_MODEL` — 없으면 요약만 생략되고 리포트는 정상 |
@@ -366,7 +365,8 @@ cp .env.example .env                    # 값 채우기
 uvicorn api.main:app --reload           # http://127.0.0.1:8000/docs
 
 # 5) 크롤링 수동 실행
-python -m scripts.crawl_naver
+python -m scripts.crawl_naver_brightdata            # Bright Data 크리덴셜(proxy.env) 필요
+python -m scripts.crawl_naver_brightdata --dry-run  # DB 저장 없이 수집·필터 결과만 확인
 python -m scripts.crawl_coupang_brand   # Bright Data 크리덴셜(proxy.env) 필요
 ```
 
@@ -400,14 +400,15 @@ Railway 프로젝트 → **+ New** → **Database** → **MySQL**. 생성되면 
 1. **+ New** → **Cron Job**
 2. **Schedule**: `0 0,6,9,12,18,21 * * *`
    - ⚠️ Railway Cron은 **UTC 기준**입니다. 위 식은 KST 03:00 / 06:00 / 09:00 / 15:00 / 18:00 / 21:00에 해당합니다 (KST = UTC + 9).
-3. **Command**: `python -m scripts.crawl_naver`
+3. **Command**: `python -m scripts.crawl_naver_brightdata`
 4. **Variables**:
    - `MYSQLHOST = ${{ MySQL.MYSQLHOST }}`
    - `MYSQLUSER = ${{ MySQL.MYSQLUSER }}`
    - `MYSQLPASSWORD = ${{ MySQL.MYSQLPASSWORD }}`
    - `MYSQLDATABASE = ${{ MySQL.MYSQLDATABASE }}`
    - `MYSQLPORT = ${{ MySQL.MYSQLPORT }}`
-   - `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`, `SEARCH_KEYWORD`
+   - `BRIGHT_DATA_PROXY`, `BRIGHT_DATA_USERNAME`, `BRIGHT_DATA_PASSWORD`, `SEARCH_KEYWORD`
+   - web 서비스의 수동 크롤링(`/crawl`)도 같은 크롤러를 쓰므로 web에도 `BRIGHT_DATA_*`가 있어야 합니다.
 
 > **참고**: Variables에서 MySQL 서비스를 참조하는 변수를 추가하면 Architecture 탭에 자동으로 연결선이 생깁니다.
 > Railway Cron Job은 스케줄 시각에 컨테이너를 시작하고 작업 완료 후 종료합니다.

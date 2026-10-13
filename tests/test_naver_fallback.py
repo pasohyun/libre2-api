@@ -186,3 +186,12 @@ def test_other_proxy_error_still_retries(monkeypatch):
     with pytest.raises(m.BlockedError):
         m._fetch_page_via_proxy("kw", 1, proxy_cfg=cfg)
     assert len(calls) == m.MAX_RETRIES
+
+
+def test_legacy_entrypoint_delegates_to_brightdata(monkeypatch):
+    import scripts.crawl_naver as legacy
+
+    calls = []
+    monkeypatch.setattr(m, "run_crawling", lambda *a, **k: calls.append(1))
+    legacy.run_crawling()
+    assert calls == [1]
