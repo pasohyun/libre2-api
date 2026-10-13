@@ -70,7 +70,8 @@ def _run_crawl_job(run_naver: bool = True):
         _crawl_last_started_at_kst = datetime.now(KST)
         _crawl_last_error = None
         if run_naver:
-            from scripts.crawl_naver import run_crawling
+            # 네이버 검색 API 제공 중단으로 Bright Data 자체 크롤러만 사용한다.
+            from scripts.crawl_naver_brightdata import run_crawling
             run_crawling()
     except Exception as e:
         _crawl_last_error = str(e)
