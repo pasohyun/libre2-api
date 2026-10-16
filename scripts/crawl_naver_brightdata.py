@@ -568,6 +568,13 @@ def run_crawling(*, use_proxy: bool = True, dry_run: bool = False):
 
     inserted = save_to_db(rows, snapshot_id=snapshot_id, snapshot_at=snapshot_at)
     _log(f"DB inserted: {inserted}")
+    if not inserted:
+        # save_to_db 는 DB 연결 실패·삭제 실패 시 예외 없이 0을 반환한다.
+        # 그대로 두면 Cron 은 성공(exit 0), /crawl/status 도 last_error=None 으로 남아
+        # 적재 누락을 알 수 없으므로 실패로 올린다.
+        raise NaverCrawlFailed(
+            f"DB 적재 0건 (필터 통과 {len(rows)}건) — DB 연결/환경변수(MYSQLHOST 등) 확인 필요"
+        )
 
     if not config.ENABLE_AUTO_CARD_RENDER:
         _log("Auto card render/upload skipped: ENABLE_AUTO_CARD_RENDER is false")
