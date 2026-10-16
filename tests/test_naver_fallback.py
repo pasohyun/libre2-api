@@ -195,3 +195,15 @@ def test_legacy_entrypoint_delegates_to_brightdata(monkeypatch):
     monkeypatch.setattr(m, "run_crawling", lambda *a, **k: calls.append(1))
     legacy.run_crawling()
     assert calls == [1]
+
+
+def test_db_insert_zero_raises(monkeypatch):
+    """DB 연결 실패로 save_to_db 가 0을 반환하면 성공으로 넘기지 않는다."""
+    monkeypatch.setattr(m, "load_confirmed_qty_by_link_map", lambda: {})
+    monkeypatch.setattr(m, "fetch_all_products",
+                        lambda kw, use_proxy=True: ([{"x": 1}], {"total": 1}))
+    monkeypatch.setattr(m, "build_rows", lambda items, kw, confirmed_qty_by_link=None: [
+        {"unit_price": 90000}])
+    monkeypatch.setattr(m, "save_to_db", lambda rows, **kw: 0)
+    with pytest.raises(m.NaverCrawlFailed, match="DB 적재 0건"):
+        m.run_crawling()
