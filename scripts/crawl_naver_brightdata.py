@@ -37,6 +37,7 @@
 """
 import argparse
 import os
+import random
 import time
 import urllib.parse
 import uuid
@@ -50,6 +51,7 @@ load_dotenv()            # .env  (DB 등)
 load_dotenv("proxy.env")  # Bright Data 크리덴셜
 
 import config
+from scripts.crawl_lock import CrawlAlreadyRunning, naver_crawl_lock
 from scripts.crawl_naver import (
     KST,
     MANUAL_QUANTITY_PENDING_METHODS,
@@ -82,6 +84,13 @@ MAX_PAGES = int(os.getenv("NAVER_MAX_PAGES", "20"))        # 안전장치
 REQUEST_TIMEOUT = int(os.getenv("NAVER_REQUEST_TIMEOUT", "45"))
 MAX_RETRIES = int(os.getenv("NAVER_MAX_RETRIES", "3"))
 PAGE_SLEEP_SEC = float(os.getenv("NAVER_PAGE_SLEEP_SEC", "0.4"))
+# 재시도 대기: base * 2^(attempt-1) + jitter, 최대 RETRY_MAX_SEC (기본 5s → 10s, 최대 60s)
+# 10/13 운영 첫 실행 때 2·4초 간격 재시도가 여러 Cron 과 겹쳐 502 차단을 키웠다.
+RETRY_BASE_SEC = float(os.getenv("NAVER_RETRY_BASE_SEC", "5"))
+RETRY_MAX_SEC = float(os.getenv("NAVER_RETRY_MAX_SEC", "60"))
+RETRY_JITTER_SEC = float(os.getenv("NAVER_RETRY_JITTER_SEC", "2"))
+# 백엔드 전환 직전 대기 (차단 직후 같은 대상에 바로 붙지 않도록)
+BACKEND_SWITCH_SLEEP_SEC = float(os.getenv("NAVER_BACKEND_SWITCH_SLEEP_SEC", "10"))
 
 USER_AGENT = os.getenv(
     "NAVER_USER_AGENT",
@@ -113,6 +122,12 @@ MIN_UNIT_PRICE = int(os.getenv("NAVER_MIN_UNIT_PRICE", "65000"))
 
 if not VERIFY_TLS:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+def retry_delay(attempt: int) -> float:
+    """attempt(1부터)번째 실패 후 기다릴 초. 지수 백오프 + 지터, 상한 RETRY_MAX_SEC."""
+    base = min(RETRY_BASE_SEC * (2 ** (attempt - 1)), RETRY_MAX_SEC)
+    return base + random.uniform(0, RETRY_JITTER_SEC)
 
 
 class BlockedError(RuntimeError):
@@ -231,7 +246,7 @@ def _fetch_page_via_proxy(
                 raise BlockedError(f"cursor={cursor} 프록시 인증 실패(407)") from e
             _log(f"    [RETRY {attempt}/{MAX_RETRIES}] 요청 실패: {last_reason}")
             if attempt < MAX_RETRIES:
-                time.sleep(attempt * 2)
+                time.sleep(retry_delay(attempt))
             continue
 
         elapsed = time.time() - t0
@@ -240,7 +255,7 @@ def _fetch_page_via_proxy(
             last_reason = reason
             _log(f"    [RETRY {attempt}/{MAX_RETRIES}] 차단 감지: {reason} ({elapsed:.1f}s)")
             if attempt < MAX_RETRIES:
-                time.sleep(attempt * 2)
+                time.sleep(retry_delay(attempt))
             continue
 
         try:
@@ -249,7 +264,7 @@ def _fetch_page_via_proxy(
             last_reason = f"응답 파싱 실패: {e}"
             _log(f"    [RETRY {attempt}/{MAX_RETRIES}] {last_reason}")
             if attempt < MAX_RETRIES:
-                time.sleep(attempt * 2)
+                time.sleep(retry_delay(attempt))
             continue
 
         items = data.get("data") or []
@@ -259,7 +274,7 @@ def _fetch_page_via_proxy(
             last_reason = f"첫 페이지 0건(total={data.get('total')}) — 소프트 차단 의심"
             _log(f"    [RETRY {attempt}/{MAX_RETRIES}] {last_reason}")
             if attempt < MAX_RETRIES:
-                time.sleep(attempt * 2)
+                time.sleep(retry_delay(attempt))
             continue
 
         _log(
@@ -384,7 +399,9 @@ def fetch_all_products(keyword: str, *, use_proxy: bool = True, backends=None):
                 raise NaverCrawlFailed(
                     f"모든 백엔드 실패 (수집 {len(items)}건에서 중단): " + " | ".join(failures)
                 ) from e
-            _log(f"[NAVER] fallback → {backends[idx][0]} (cursor={cursor}부터 이어서)")
+            _log(f"[NAVER] fallback → {backends[idx][0]} (cursor={cursor}부터 이어서, "
+                 f"{BACKEND_SWITCH_SLEEP_SEC:g}초 대기)")
+            time.sleep(BACKEND_SWITCH_SLEEP_SEC)
             continue
 
         items.extend(batch)
@@ -526,7 +543,14 @@ def run_crawling(*, use_proxy: bool = True, dry_run: bool = False):
     """크롤링 → DB 저장 → 카드 렌더/S3 업로드.
 
     crawl_naver.run_crawling() 과 동일한 orchestration 이라 호출부는 교체만 하면 된다.
+    Cron·web(/crawl/run) 어느 쪽에서 호출해도 DB 락으로 동시에 하나만 돈다.
+    이미 실행 중이면 CrawlAlreadyRunning 을 올린다.
     """
+    with naver_crawl_lock(log=_log):
+        _run_crawling_locked(use_proxy=use_proxy, dry_run=dry_run)
+
+
+def _run_crawling_locked(*, use_proxy: bool, dry_run: bool):
     crawl_started_at = datetime.now(KST).replace(microsecond=0)
     _log(f"START NAVER (Bright Data): {crawl_started_at.isoformat(timespec='seconds')}")
     keyword = config.SEARCH_KEYWORD
@@ -605,6 +629,10 @@ def main():
     args = ap.parse_args()
     try:
         run_crawling(use_proxy=not args.no_proxy, dry_run=args.dry_run)
+    except CrawlAlreadyRunning as e:
+        # 겹친 실행은 실패가 아니다. exit 0 으로 끝내 Railway 재시작 루프를 만들지 않는다.
+        _log(f"[SKIP] {e}")
+        return
     except NaverCrawlFailed as e:
         _log(f"[ERROR] {e}")
         raise SystemExit(1)
