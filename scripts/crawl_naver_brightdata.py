@@ -426,6 +426,33 @@ def fetch_all_products(keyword: str, *, use_proxy: bool = True, backends=None):
     return items, {"total": total, "pages": pages, "backends_used": backends_used}
 
 
+# 전체 수집이 실패했을 때 잠시 쉬었다가 처음부터 다시 시도하는 횟수/대기 시간.
+# 운영에서 새벽(03·06시) 실행만 502 차단이 반복돼, 몇 초 간격 재시도로는 풀리지 않는 경우를 대비한다.
+ROUND_RETRIES = int(os.getenv("NAVER_ROUND_RETRIES", "2"))
+ROUND_RETRY_WAIT_SEC = float(os.getenv("NAVER_ROUND_RETRY_WAIT_SEC", "300"))
+
+
+def fetch_with_round_retry(keyword: str, *, use_proxy: bool = True, backends=None):
+    """fetch_all_products() 가 실패하면 ROUND_RETRY_WAIT_SEC 쉬고 처음부터 다시 수집한다.
+
+    부분 수집분은 이어 붙이지 않는다 (대기 중 검색 결과가 바뀔 수 있음).
+    마지막 회차까지 실패하면 NaverCrawlFailed 를 그대로 올린다.
+    """
+    backends = backends if backends is not None else build_fetch_backends(use_proxy=use_proxy)
+    rounds = ROUND_RETRIES + 1
+    for round_no in range(1, rounds + 1):
+        try:
+            return fetch_all_products(keyword, use_proxy=use_proxy, backends=backends)
+        except NaverCrawlFailed as e:
+            if round_no >= rounds:
+                raise
+            _log(
+                f"[NAVER] 수집 실패 ({round_no}/{rounds}회차) — "
+                f"{ROUND_RETRY_WAIT_SEC:.0f}초 후 처음부터 재시도: {e}"
+            )
+            time.sleep(ROUND_RETRY_WAIT_SEC)
+
+
 def check_completeness(items, total) -> None:
     """수집 건수가 네이버가 알려준 total 대비 너무 적으면 저장을 막는다.
 
@@ -560,7 +587,7 @@ def _run_crawling_locked(*, use_proxy: bool, dry_run: bool):
         _log(f"수동확정 수량 재사용 맵: {len(confirmed_map)}개 링크")
 
     # 실패 시 예외를 올려 /crawl/status 의 last_error 에 남게 한다. (기존 DB 데이터는 보존)
-    items, meta = fetch_all_products(keyword, use_proxy=use_proxy)
+    items, meta = fetch_with_round_retry(keyword, use_proxy=use_proxy)
     if not items:
         raise NaverCrawlFailed("수집 0건 — 차단 가능성. DB 저장을 건너뜁니다.")
     check_completeness(items, meta["total"])

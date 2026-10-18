@@ -1111,4 +1111,8 @@ def _run_crawling_legacy_api():
 
 
 if __name__ == "__main__":
-    run_crawling()
+    # 겹친 실행(exit 0)·수집 실패(exit 1) 처리를 새 크롤러 진입점과 동일하게 맞춘다.
+    from scripts.crawl_naver_brightdata import main as brightdata_main
+
+    _log("[DEPRECATED] 네이버 검색 API 중단 — scripts.crawl_naver_brightdata 로 위임합니다.")
+    brightdata_main()
