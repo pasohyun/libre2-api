@@ -339,7 +339,7 @@ JWT_SECRET=                  # 미설정 시 개발용 기본키로 동작하며
 | 스케줄 | `CRAWL_TIMES_KST`(기본 `03:00,06:00,09:00,15:00,18:00,21:00`) |
 | Bright Data (네이버·쿠팡 공용) | `BRIGHT_DATA_PROXY`, `BRIGHT_DATA_USERNAME`(주거용 존, `-country-kr` 필수), `BRIGHT_DATA_PASSWORD` — 로컬은 `proxy.env`, Railway는 web·네이버 Cron 서비스 Variables. 쿠팡은 `BRIGHT_DATA_BROWSER_WSS`도 사용 |
 | 네이버 fallback(선택) | `NAVER_FETCH_BACKENDS`(기본 `residential,unlocker,direct`), `BRIGHT_DATA_FALLBACK_PROXY/USERNAME/PASSWORD`, `NAVER_ALLOW_DIRECT`(한국 IP 서버에서만 true), `NAVER_MIN_COMPLETENESS`(기본 0.9) |
-| 네이버 재시도·동시 실행(선택) | `NAVER_RETRY_BASE_SEC`(기본 5, 지수 백오프), `NAVER_RETRY_MAX_SEC`(60), `NAVER_RETRY_JITTER_SEC`(2), `NAVER_BACKEND_SWITCH_SLEEP_SEC`(10), `NAVER_CRAWL_LOCK_NAME`(`libre2_naver_crawl`) — Cron·web이 같은 MySQL `GET_LOCK`으로 동시에 1개만 실행, 겹치면 exit 0으로 건너뜀 |
+| 네이버 재시도·동시 실행(선택) | `NAVER_RETRY_BASE_SEC`(기본 5, 지수 백오프), `NAVER_RETRY_MAX_SEC`(60), `NAVER_RETRY_JITTER_SEC`(2), `NAVER_BACKEND_SWITCH_SLEEP_SEC`(10), `NAVER_ROUND_RETRIES`/`NAVER_ROUND_RETRY_WAIT_SEC`(전체 실패 시 대기 후 처음부터 재수집, 기본 2회/300초), `NAVER_CRAWL_LOCK_NAME`(`libre2_naver_crawl`) — Cron·web이 같은 MySQL `GET_LOCK`으로 동시에 1개만 실행, 겹치면 exit 0으로 건너뜀 |
 | 쿠팡 SSH 트리거 | `COUPANG_SSH_HOST/PORT/USER/PASSWORD/WORKDIR/PYTHON/MODULE` |
 | 분석 튜닝 | `PRICE_ANALYTICS_*` (베이스라인 일수, modified z 임계값, ETS/OLS 구간 등) |
 | OpenAI(선택) | `OPENAI_API_KEY`, `OPENAI_MODEL` — 없으면 요약만 생략되고 리포트는 정상 |

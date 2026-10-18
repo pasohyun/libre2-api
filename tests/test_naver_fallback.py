@@ -145,6 +145,7 @@ def test_run_crawling_raises_on_failure_without_saving(monkeypatch):
     saved = []
     monkeypatch.setattr(m, "load_confirmed_qty_by_link_map", lambda: {})
     monkeypatch.setattr(m, "save_to_db", lambda *a, **k: saved.append(1))
+    monkeypatch.setattr(m, "build_fetch_backends", lambda **k: [("a", None)])
 
     def boom(*a, **k):
         raise m.NaverCrawlFailed("모든 백엔드 실패")
@@ -200,10 +201,57 @@ def test_legacy_entrypoint_delegates_to_brightdata(monkeypatch):
 def test_db_insert_zero_raises(monkeypatch):
     """DB 연결 실패로 save_to_db 가 0을 반환하면 성공으로 넘기지 않는다."""
     monkeypatch.setattr(m, "load_confirmed_qty_by_link_map", lambda: {})
+    monkeypatch.setattr(m, "build_fetch_backends", lambda **k: [("a", None)])
     monkeypatch.setattr(m, "fetch_all_products",
-                        lambda kw, use_proxy=True: ([{"x": 1}], {"total": 1}))
+                        lambda *a, **k: ([{"x": 1}], {"total": 1}))
     monkeypatch.setattr(m, "build_rows", lambda items, kw, confirmed_qty_by_link=None: [
         {"unit_price": 90000}])
     monkeypatch.setattr(m, "save_to_db", lambda rows, **kw: 0)
     with pytest.raises(m.NaverCrawlFailed, match="DB 적재 0건"):
         m.run_crawling()
+
+
+def test_round_retry_recovers_after_wait(monkeypatch):
+    calls, waits = [], []
+    monkeypatch.setattr(m.time, "sleep", lambda sec: waits.append(sec))
+    monkeypatch.setattr(m, "ROUND_RETRIES", 2)
+    monkeypatch.setattr(m, "ROUND_RETRY_WAIT_SEC", 300)
+
+    def flaky(*a, **k):
+        calls.append(1)
+        if len(calls) < 3:
+            raise m.NaverCrawlFailed("502")
+        return [{"id": 1}], {"total": 1}
+    monkeypatch.setattr(m, "fetch_all_products", flaky)
+
+    items, meta = m.fetch_with_round_retry("kw", backends=[("a", None)])
+    assert items == [{"id": 1}]
+    assert len(calls) == 3
+    assert waits == [300, 300]
+
+
+def test_round_retry_gives_up_after_last_round(monkeypatch):
+    calls = []
+    monkeypatch.setattr(m, "ROUND_RETRIES", 1)
+
+    def always_fail(*a, **k):
+        calls.append(1)
+        raise m.NaverCrawlFailed("502")
+    monkeypatch.setattr(m, "fetch_all_products", always_fail)
+
+    with pytest.raises(m.NaverCrawlFailed):
+        m.fetch_with_round_retry("kw", backends=[("a", None)])
+    assert len(calls) == 2
+
+
+@pytest.mark.filterwarnings("ignore:.*found in sys.modules:RuntimeWarning")
+def test_legacy_main_skips_cleanly_when_already_running(monkeypatch):
+    """python -m scripts.crawl_naver 로 실행돼도 겹친 실행은 exit 0 으로 끝난다."""
+    import runpy
+    import scripts.crawl_lock as lock
+
+    def busy(**_):
+        raise lock.CrawlAlreadyRunning("busy")
+    monkeypatch.setattr(m, "run_crawling", busy)
+    monkeypatch.setattr("sys.argv", ["crawl_naver"])
+    runpy.run_module("scripts.crawl_naver", run_name="__main__")  # SystemExit 가 나면 실패
